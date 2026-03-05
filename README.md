@@ -25,6 +25,10 @@
   <a href="#key-components"><strong>Key Components</strong></a>
 </p>
 
+<p align="center">
+  <img src="figures/introduction.png" alt="OpenDev Introduction" width="800"/>
+</p>
+
 ## Overview
 
 **OpenDev** is a one-stop, cost-effective CLI-based coding agent designed to democratize how coding agents are built. It supports **MCP (Model Context Protocol)**, **multi-provider LLMs** (Fireworks, OpenAI, Anthropic), and deep **codebase understanding** through a modular, SOLID-based architecture.
