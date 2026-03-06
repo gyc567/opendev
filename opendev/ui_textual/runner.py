@@ -820,7 +820,10 @@ Work through each implementation step in order. Mark each todo item as 'in_progr
         if react_executor is not None:
             token = getattr(react_executor, "_active_interrupt_token", None)
             if token is not None:
-                token.request()
+                if hasattr(token, "force_interrupt"):
+                    token.force_interrupt()
+                else:
+                    token.request()
                 interrupted = True
                 debug_log("Runner", "Interrupted via ReactExecutor._active_interrupt_token")
 

@@ -674,6 +674,17 @@ class SWECLIChatApp(App):
         # Stop local spinner
         if hasattr(self, "_stop_local_spinner"):
             self._stop_local_spinner()
+        # Write the interrupt message directly on the UI thread (guarantees it
+        # appears even if the executor thread is stuck being killed)
+        if hasattr(self, "conversation"):
+            from opendev.ui_textual.utils.interrupt_utils import (
+                strip_trailing_blanks,
+                create_interrupt_text,
+                STANDARD_INTERRUPT_MESSAGE,
+            )
+
+            strip_trailing_blanks(self.conversation)
+            self.conversation.write(create_interrupt_text(STANDARD_INTERRUPT_MESSAGE))
 
     def action_clear_or_quit(self) -> None:
         """Clear input text or quit (Ctrl+C).

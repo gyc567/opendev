@@ -4,6 +4,7 @@ import hashlib
 import logging
 import os
 import queue as queue_mod
+import threading
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -377,6 +378,7 @@ class ReactExecutor(ThinkingMixin, ToolProcessingMixin, SessionPersistenceMixin,
 
         # Create a single interrupt token for this entire run
         self._active_interrupt_token = InterruptToken()
+        self._active_interrupt_token.set_thread_ident(threading.get_ident())
 
         # Wire token to InterruptManager so ESC can signal it directly (Fix 1)
         _ui_callback = ui_callback  # Capture for finally block
@@ -474,14 +476,19 @@ class ReactExecutor(ThinkingMixin, ToolProcessingMixin, SessionPersistenceMixin,
                         _debug_log("[INJECT] New messages in queue, continuing loop")
                         continue
                     break
+        except InterruptedError:
+            _debug_log("[INTERRUPT] Caught InterruptedError in execute() main loop")
         except Exception as e:
-            self.console.print(f"[red]Error: {str(e)}[/red]")
-            import traceback
+            if isinstance(e, InterruptedError):
+                _debug_log("[INTERRUPT] Caught InterruptedError (via isinstance) in execute()")
+            else:
+                self.console.print(f"[red]Error: {str(e)}[/red]")
+                import traceback
 
-            tb = traceback.format_exc()
-            traceback.print_exc()
-            self._last_error = str(e)
-            _session_debug().log("error", "react", error=str(e), traceback=tb)
+                tb = traceback.format_exc()
+                traceback.print_exc()
+                self._last_error = str(e)
+                _session_debug().log("error", "react", error=str(e), traceback=tb)
         finally:
             interrupted = bool(
                 self._active_interrupt_token and self._active_interrupt_token.is_requested()

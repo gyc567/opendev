@@ -328,40 +328,17 @@ class TextualUICallback(
             context: "thinking" or "tool"
         """
 
-        def write_interrupt_replacing_blank_line():
-            # Remove trailing blank line if present (SpacingManager adds one after user message)
-            # Use simpler detection: try to render last line and check if empty
-            if hasattr(self.conversation, "lines") and len(self.conversation.lines) > 0:
-                last_line = self.conversation.lines[-1]
-
-                # Check if blank: Strip objects have _segments, Text objects have plain
-                is_blank = False
-                try:
-                    if hasattr(last_line, "_segments"):
-                        # Strip object - check if all segments are empty/whitespace
-                        text = "".join(seg.text for seg in last_line._segments)
-                        is_blank = not text.strip()
-                    elif hasattr(last_line, "plain"):
-                        is_blank = not last_line.plain.strip()
-                    else:
-                        # Try string conversion as fallback
-                        is_blank = not str(last_line).strip()
-                except Exception:
-                    pass  # If detection fails, don't remove anything
-
-                if is_blank and hasattr(self.conversation, "_truncate_from"):
-                    self.conversation._truncate_from(len(self.conversation.lines) - 1)
-
-            # Write interrupt message using shared utility
+        def write_interrupt():
             from opendev.ui_textual.utils.interrupt_utils import (
+                strip_trailing_blanks,
                 create_interrupt_text,
                 STANDARD_INTERRUPT_MESSAGE,
             )
 
-            interrupt_line = create_interrupt_text(STANDARD_INTERRUPT_MESSAGE)
-            self.conversation.write(interrupt_line)
+            strip_trailing_blanks(self.conversation)
+            self.conversation.write(create_interrupt_text(STANDARD_INTERRUPT_MESSAGE))
 
-        self._run_on_ui(write_interrupt_replacing_blank_line)
+        self._run_on_ui(write_interrupt)
 
     def on_bash_output_line(self, line: str, is_stderr: bool = False) -> None:
         """Called for each line of bash output during execution.

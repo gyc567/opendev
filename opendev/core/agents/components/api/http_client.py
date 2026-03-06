@@ -216,6 +216,11 @@ class AgentHttpClient:
                 return HttpResult(success=False, error=str(exc))
 
         # Interrupt-aware execution path
+        # Register HTTP cancel callback so force_interrupt() can close the connection
+        token = getattr(task_monitor, "interrupt_token", None)
+        if token is not None and hasattr(token, "set_http_cancel_callback"):
+            token.set_http_cancel_callback(lambda: self._client.close())
+
         response_container: dict[str, Any] = {"response": None, "error": None}
 
         def make_request() -> None:
@@ -229,26 +234,33 @@ class AgentHttpClient:
 
         from opendev.ui_textual.debug_logger import debug_log
 
-        poll_count = 0
-        while request_thread.is_alive():
-            poll_count += 1
+        try:
+            poll_count = 0
+            while request_thread.is_alive():
+                poll_count += 1
 
-            # Log every 10th poll (every ~1 second)
-            if poll_count % 10 == 1:
-                interrupt_flag = self._should_interrupt(task_monitor)
-                debug_log(
-                    "HttpClient",
-                    f"poll #{poll_count}, should_interrupt={interrupt_flag}, "
-                    f"task_monitor={task_monitor}",
-                )
+                # Log every 10th poll (every ~1 second)
+                if poll_count % 10 == 1:
+                    interrupt_flag = self._should_interrupt(task_monitor)
+                    debug_log(
+                        "HttpClient",
+                        f"poll #{poll_count}, should_interrupt={interrupt_flag}, "
+                        f"task_monitor={task_monitor}",
+                    )
 
-            if self._should_interrupt(task_monitor):
-                debug_log(
-                    "HttpClient",
-                    f"INTERRUPT DETECTED at poll #{poll_count}",
-                )
-                return HttpResult(success=False, error="Interrupted by user", interrupted=True)
-            request_thread.join(timeout=0.01)  # 10ms polling for ESC interrupt
+                if self._should_interrupt(task_monitor):
+                    debug_log(
+                        "HttpClient",
+                        f"INTERRUPT DETECTED at poll #{poll_count}",
+                    )
+                    return HttpResult(
+                        success=False, error="Interrupted by user", interrupted=True
+                    )
+                request_thread.join(timeout=0.01)  # 10ms polling for ESC interrupt
+        finally:
+            # Clear callback to avoid stale references
+            if token is not None and hasattr(token, "set_http_cancel_callback"):
+                token.set_http_cancel_callback(None)
 
         if response_container["error"]:
             return HttpResult(success=False, error=str(response_container["error"]))

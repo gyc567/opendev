@@ -446,6 +446,8 @@ class ToolRegistry:
                 # Remaining handlers ignore execution context
                 result = handler(arguments)
         except Exception as exc:  # noqa: BLE001
+            if isinstance(exc, InterruptedError):
+                raise
             import traceback as _tb
 
             logger.error("Tool execution failed: %s\n%s", exc, _tb.format_exc())

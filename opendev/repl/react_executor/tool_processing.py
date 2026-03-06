@@ -402,6 +402,8 @@ class ToolProcessingMixin:
                 tool_call_id=tool_call_id,
             )
         except Exception as exc:
+            if isinstance(exc, InterruptedError):
+                raise
             _session_debug().log(
                 "tool_call_error",
                 "tool",
@@ -503,6 +505,10 @@ class ToolProcessingMixin:
                 tool_call = future_to_call[future]
                 try:
                     result = future.result()
+                except InterruptedError:
+                    result = {
+                        "success": False, "error": "Interrupted by user", "interrupted": True
+                    }
                 except Exception as e:
                     result = {"success": False, "error": str(e)}
 
@@ -532,6 +538,10 @@ class ToolProcessingMixin:
                 tool_call = future_to_call[future]
                 try:
                     result = future.result()
+                except InterruptedError:
+                    result = {
+                        "success": False, "error": "Interrupted by user", "interrupted": True
+                    }
                 except Exception as e:
                     result = {"success": False, "error": str(e)}
                 tool_results_by_id[tool_call["id"]] = result

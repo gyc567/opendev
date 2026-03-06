@@ -129,6 +129,12 @@ class TaskMonitor:
         with self._lock:
             self._interrupt_token = token
 
+    @property
+    def interrupt_token(self) -> "InterruptToken | None":
+        """Expose the attached interrupt token (read-only)."""
+        with self._lock:
+            return self._interrupt_token
+
     def is_running(self) -> bool:
         """Check if task is currently running.
 

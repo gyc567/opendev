@@ -278,13 +278,19 @@ class InterruptManager:
     def request_run_interrupt(self) -> bool:
         """Request interrupt of the active run via the interrupt token.
 
+        Uses force_interrupt() for immediate, brutal cancellation when available,
+        falling back to the polling-based request() for older tokens.
+
         Returns:
             True if an active token was found and signaled.
         """
         with self._lock:
             token = self._active_interrupt_token
         if token is not None:
-            token.request()
+            if hasattr(token, "force_interrupt"):
+                token.force_interrupt()
+            else:
+                token.request()
             return True
         return False
 

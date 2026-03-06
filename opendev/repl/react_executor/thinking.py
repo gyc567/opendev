@@ -102,6 +102,8 @@ class ThinkingMixin:
                 debug_log("ReactExecutor", "Thinking phase: CLEARED _current_task_monitor")
 
         except Exception as e:
+            if isinstance(e, InterruptedError):
+                raise
             # Log exceptions for debugging
             if ui_callback and hasattr(ui_callback, "on_debug"):
                 ui_callback.on_debug(f"Thinking phase exception: {str(e)}", "THINK")
@@ -171,6 +173,8 @@ class ThinkingMixin:
                 self._current_task_monitor = None
 
         except Exception as e:
+            if isinstance(e, InterruptedError):
+                raise
             if ui_callback and hasattr(ui_callback, "on_debug"):
                 ui_callback.on_debug(f"Critique phase exception: {str(e)}", "CRITIQUE")
             import logging
@@ -244,6 +248,8 @@ Please provide refined reasoning that addresses these concerns. Keep it concise 
                 self._current_task_monitor = None
 
         except Exception as e:
+            if isinstance(e, InterruptedError):
+                raise
             if ui_callback and hasattr(ui_callback, "on_debug"):
                 ui_callback.on_debug(f"Refinement error: {str(e)}", "CRITIQUE")
 
