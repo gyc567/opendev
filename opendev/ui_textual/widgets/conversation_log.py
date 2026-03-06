@@ -776,7 +776,31 @@ class ConversationLog(RichLog):
 
     def toggle_single_agent_expansion(self) -> bool:
         """Toggle expand/collapse of last completed single agent's tool calls."""
-        return self._tool_renderer.toggle_single_agent_expansion()
+        expanded, delta, first_affected = self._tool_renderer.toggle_single_agent_expansion()
+
+        if delta != 0:
+            self._spinner_manager.adjust_indices(delta, first_affected)
+            self._tool_renderer.adjust_indices(delta, first_affected)
+
+            if hasattr(self, "app") and hasattr(self.app, "spinner_service"):
+                self.app.spinner_service.adjust_indices(delta, first_affected)
+
+            # Adjust own tracked indices
+            if self._approval_start is not None and self._approval_start >= first_affected:
+                self._approval_start += delta
+            if self._ask_user_start is not None and self._ask_user_start >= first_affected:
+                self._ask_user_start += delta
+            if self._plan_approval_start is not None and self._plan_approval_start >= first_affected:
+                self._plan_approval_start += delta
+
+            # Adjust controller indices
+            if hasattr(self, "app"):
+                for ctrl_attr in ["_model_picker", "_agent_creator", "_skill_creator"]:
+                    ctrl = getattr(self.app, ctrl_attr, None)
+                    if ctrl and hasattr(ctrl, "adjust_indices"):
+                        ctrl.adjust_indices(delta, first_affected)
+
+        return expanded
 
     # --- Collapsible Output Methods ---
 

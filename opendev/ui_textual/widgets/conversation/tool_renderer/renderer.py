@@ -440,15 +440,15 @@ class DefaultToolRenderer(
             and len(self._completed_single_agent.tool_records) > 0
         )
 
-    def toggle_single_agent_expansion(self) -> bool:
+    def toggle_single_agent_expansion(self) -> tuple[bool, int, int]:
         """Toggle expand/collapse of the last completed single agent's tool calls.
 
         Returns:
-            New expansion state (True = expanded)
+            Tuple of (new expansion state, line delta, first affected line index)
         """
         agent = self._completed_single_agent
         if agent is None or not agent.tool_records:
-            return False
+            return False, 0, 0
 
         self._single_agent_expanded = not self._single_agent_expanded
 
@@ -475,6 +475,7 @@ class DefaultToolRenderer(
             for i, strip in enumerate(lines_to_insert):
                 self.log.lines.insert(insert_at + i, strip)
 
+            delta = len(lines_to_insert)
             self._update_single_agent_summary(agent, "(ctrl+o to collapse)")
 
             if hasattr(self.log, "_recalculate_virtual_size"):
@@ -487,6 +488,7 @@ class DefaultToolRenderer(
                 count += 1  # Account for the failure reason line
             del self.log.lines[insert_at : insert_at + count]
 
+            delta = -count
             hint = " (ctrl+o to expand)"
             self._update_single_agent_summary(agent, hint)
 
@@ -494,7 +496,7 @@ class DefaultToolRenderer(
                 self.log._recalculate_virtual_size()
             self.log.refresh()
 
-        return self._single_agent_expanded
+        return self._single_agent_expanded, delta, insert_at
 
     def _update_single_agent_summary(self, agent: SingleAgentInfo, hint: str) -> None:
         """Update the tool line summary with the given hint text."""
