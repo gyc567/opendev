@@ -16,6 +16,16 @@
 
 ---
 
+### Introduction
+
+OpenDev is an open-source, terminal-native coding agent built as a compound AI system. Instead of a single monolithic LLM, it uses a structured ensemble of agents and workflows — each independently bound to a user-configured model.
+
+Work is organized into concurrent sessions composed of specialized sub-agents. Each agent executes typed workflows (Execution, Thinking, Compaction) that independently bind to an LLM, enabling fine-grained cost, latency, and capability trade-offs per workflow.
+
+<p align="center">
+  <img src="figures/top.png" alt="OpenDev Compound AI Architecture" width="700"/>
+</p>
+
 ### Installation
 
 ```bash
