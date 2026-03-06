@@ -224,6 +224,20 @@ class MessageProcessor:
                 finally:
                     self._pending.task_done()
 
+                    # Safety net: stop any orphaned spinners left by abnormal exits
+                    # (internet drop, timeout, crash). This prevents stuck spinning
+                    # indicators in the UI when the agent loop exits unexpectedly.
+                    if hasattr(self._app, "spinner_service"):
+                        spinner_svc = self._app.spinner_service
+                        if spinner_svc.get_active_count() > 0:
+                            self._app.call_from_thread(
+                                spinner_svc.stop_all, immediate=True, success=False
+                            )
+
+                    # Refresh todo panel so it reflects reset states from
+                    # _reset_stuck_todos() (which ran on the agent thread).
+                    self._refresh_todo_panel()
+
                     # Notify completion if queue empty (for both commands and messages)
                     if self._pending.empty():
                         if hasattr(self._app, "notify_processing_complete"):
@@ -234,3 +248,17 @@ class MessageProcessor:
 
             except Exception:  # pragma: no cover - defensive
                 continue
+
+    def _refresh_todo_panel(self) -> None:
+        """Refresh the todo panel on the UI thread.
+
+        Called after the agent run finishes to reflect any state changes
+        made by _reset_stuck_todos() (e.g., "doing" -> "todo").
+        """
+        try:
+            from opendev.ui_textual.widgets.todo_panel import TodoPanel
+
+            panel = self._app.query_one("#todo-panel", TodoPanel)
+            self._app.call_from_thread(panel.refresh_display)
+        except Exception:
+            pass  # TodoPanel might not exist
