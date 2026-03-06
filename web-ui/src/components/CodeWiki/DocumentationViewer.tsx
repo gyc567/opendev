@@ -79,7 +79,7 @@ OpenDev (Software Engineering CLI) is an AI-powered command-line tool designed t
 - **Extensibility**: Plugin-based architecture for custom tools and agents
 - **Security**: Sandboxed execution environment with approval workflows
 - **Performance**: Async execution with intelligent caching and optimization`,
-    relatedFiles: ['swecli/core/agent.py', 'swecli/web/server.py', 'swecli/tools/registry.py'],
+    relatedFiles: ['opendev/core/agent.py', 'opendev/web/server.py', 'opendev/tools/registry.py'],
     relatedPages: ['agent-system', 'web-interface', 'tool-system'],
     tags: ['architecture', 'overview', 'design'],
     diagrams: ['architecture-diagram.svg', 'component-interaction.svg']
@@ -124,7 +124,7 @@ The agent system is the core intelligence layer of OpenDev, responsible for unde
 4. **Tool Execution**: Running tools with user approval when required
 5. **Result Processing**: Analyzing outputs and determining next steps
 6. **Response Generation**: Providing clear, actionable responses`,
-    relatedFiles: ['swecli/core/agent.py', 'swecli/agents/normal.py', 'swecli/agents/debug.py'],
+    relatedFiles: ['opendev/core/agent.py', 'opendev/agents/normal.py', 'opendev/agents/debug.py'],
     relatedPages: ['tool-system', 'approval-workflow'],
     tags: ['agents', 'architecture', 'execution']
   },
@@ -172,7 +172,7 @@ The web interface provides a modern, responsive UI for OpenDev with real-time co
 - **Workspace Isolation**: Separate contexts for different projects
 - **File Change Tracking**: Comprehensive audit trail of modifications
 - **Configuration Management**: Dynamic settings and preferences`,
-    relatedFiles: ['swecli/web/server.py', 'swecli/web/websocket.py', 'swecli/web/state.py'],
+    relatedFiles: ['opendev/web/server.py', 'opendev/web/websocket.py', 'opendev/web/state.py'],
     relatedPages: ['api-reference', 'session-management'],
     tags: ['web', 'websocket', 'ui', 'real-time']
   },
@@ -219,7 +219,7 @@ Complete API documentation for OpenDev components, including REST endpoints, Web
 - \`tool_call\` - Tool execution started
 - \`tool_result\` - Tool execution completed
 - \`approval_required\` - User approval needed`,
-    relatedFiles: ['swecli/web/routes/chat.py', 'swecli/web/routes/sessions.py', 'swecli/web/config.py'],
+    relatedFiles: ['opendev/web/routes/chat.py', 'opendev/web/routes/sessions.py', 'opendev/web/config.py'],
     relatedPages: ['web-interface'],
     tags: ['api', 'reference', 'endpoints', 'websocket']
   }
