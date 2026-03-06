@@ -259,7 +259,9 @@ class TestPluginManager:
         name = manager._extract_name_from_url("https://github.com/user/awesome-plugins.git")
         assert name == "awesome-plugins"
 
-        name = manager._extract_name_from_url("https://github.com/user/swecli-superpowers-marketplace.git")
+        name = manager._extract_name_from_url(
+            "https://github.com/user/swecli-superpowers-marketplace.git"
+        )
         assert name == "superpowers"
 
     def test_extract_name_from_url_ssh(self):
@@ -291,9 +293,7 @@ class TestPluginManager:
 
         marketplace_dir = tmp_path / "test-mp"
         marketplace_dir.mkdir()
-        (marketplace_dir / "marketplace.json").write_text(
-            '{"name": "test", "plugins": []}'
-        )
+        (marketplace_dir / "marketplace.json").write_text('{"name": "test", "plugins": []}')
 
         assert manager._validate_marketplace(marketplace_dir) is True
 
@@ -411,7 +411,7 @@ Content here.
         marketplaces = manager.list_marketplaces()
         assert marketplaces == []
 
-    @patch("opendev.core.plugins.manager.subprocess.run")
+    @patch("opendev.core.plugins.manager.marketplace.subprocess.run")
     def test_add_marketplace_success(self, mock_run, tmp_path, monkeypatch):
         """Test adding a marketplace successfully."""
         swecli_dir = tmp_path / ".opendev"
