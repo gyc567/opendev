@@ -16,17 +16,17 @@ opendev --continue         # Resume most recent session
 opendev run ui             # Web UI
 
 # Code quality
-black swecli/ tests/ --line-length 100
-ruff check swecli/ tests/ --fix
-mypy swecli/
+black opendev/ tests/ --line-length 100
+ruff check opendev/ tests/ --fix
+mypy opendev/
 
 # Tests
 uv run pytest                                    # All tests
 uv run pytest tests/test_session_manager.py     # Single file
 uv run pytest tests/test_foo.py::test_bar       # Single test
-uv run pytest --cov=swecli                      # With coverage
+uv run pytest --cov=opendev                      # With coverage
 
-# Web UI (frontend build outputs to swecli/web/static/)
+# Web UI (frontend build outputs to opendev/web/static/)
 cd web-ui && npm run build
 
 # MCP server management
@@ -59,7 +59,7 @@ opendev
 
 ## Architecture Overview
 
-The CLI entry point is `opendev` (mapped to `swecli.cli:main`). The Python package is still `swecli/`.
+The CLI entry point is `opendev` (mapped to `opendev.cli:main`). The Python package is `opendev/`.
 
 ```
 Entry Point (cli.py)
@@ -117,9 +117,9 @@ Persistence (core/context_engineering/history/)
 
 **Provider Cache**: Model/provider configs are fetched from models.dev API and cached in `~/.opendev/cache/providers/*.json` with 24h TTL. No bundled fallback — if cache is empty, a blocking sync runs on first startup.
 
-**Skills System**: Skills are discovered from `.opendev/skills/` (project), `~/.opendev/skills/` (user global), and `swecli/skills/builtin/` (built-in).
+**Skills System**: Skills are discovered from `.opendev/skills/` (project), `~/.opendev/skills/` (user global), and `opendev/skills/builtin/` (built-in).
 
-**Web UI**: FastAPI backend with WebSocket for real-time updates. Frontend is React/Vite/Zustand in `web-ui/`, built to `swecli/web/static/`. Agent runs in ThreadPoolExecutor, uses `asyncio.run_coroutine_threadsafe` for WS broadcasts.
+**Web UI**: FastAPI backend with WebSocket for real-time updates. Frontend is React/Vite/Zustand in `web-ui/`, built to `opendev/web/static/`. Agent runs in ThreadPoolExecutor, uses `asyncio.run_coroutine_threadsafe` for WS broadcasts.
 
 ## Agent Design
 

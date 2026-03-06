@@ -109,6 +109,37 @@ uv run pytest --cov=opendev
 uv venv && uv pip install -e ".[dev]" && uv run pytest
 ```
 
+## Development
+
+### Code Quality
+
+```bash
+# Formatting
+black opendev/ tests/ --line-length 100
+
+# Linting
+ruff check opendev/ tests/ --fix
+
+# Type checking
+mypy opendev/
+```
+
+### Web UI
+
+The frontend is a React/Vite app in `web-ui/`, built to `opendev/web/static/`:
+
+```bash
+cd web-ui && npm run build
+```
+
+### MCP Server Management
+
+```bash
+opendev mcp list
+opendev mcp add myserver uvx mcp-server-sqlite
+opendev mcp enable/disable myserver
+```
+
 ## Quick Start
 
 1.  **Configure**: Run the setup wizard to configure your LLM providers.

@@ -82,11 +82,11 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/swe-cli/swe-cli"
-Documentation = "https://github.com/swe-cli/swe-cli#readme"
-Repository = "https://github.com/swe-cli/swe-cli"
-"Bug Tracker" = "https://github.com/swe-cli/swe-cli/issues"
-Changelog = "https://github.com/swe-cli/swe-cli/releases"
+Homepage = "https://github.com/opendev-to/opendev"
+Documentation = "https://github.com/opendev-to/opendev#readme"
+Repository = "https://github.com/opendev-to/opendev"
+"Bug Tracker" = "https://github.com/opendev-to/opendev/issues"
+Changelog = "https://github.com/opendev-to/opendev/releases"
 
 [project.scripts]
 opendev = "opendev.cli:main"
