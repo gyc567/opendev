@@ -75,9 +75,13 @@ class FileToolHandler:
                     )
                     session.add_file_change(file_change)
 
+        output_msg = f"File created: {file_path}" if write_result.success else None
+        if write_result.success and self._file_ops and self._file_ops._is_gitignored(file_path):
+            output_msg += " (note: this file is in .gitignore)"
+
         return {
             "success": write_result.success,
-            "output": f"File created: {file_path}" if write_result.success else None,
+            "output": output_msg,
             "error": (write_result.error or "Write operation failed") if not write_result.success else None,
         }
 
@@ -169,6 +173,11 @@ class FileToolHandler:
             if edit_result.success
             else None
         )
+
+        # Note if file is gitignored
+        if edit_result.success and output_msg:
+            if self._file_ops and self._file_ops._is_gitignored(file_path):
+                output_msg += " (note: this file is in .gitignore)"
 
         # LSP diagnostics: check for errors introduced by the edit
         if edit_result.success and output_msg:

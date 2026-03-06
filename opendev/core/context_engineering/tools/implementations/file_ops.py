@@ -140,6 +140,36 @@ class FileOperations:
         """
         self.config = config
         self.working_dir = working_dir
+        self._gitignore = None
+
+    @property
+    def gitignore(self):
+        """Lazy-cached GitIgnoreParser instance."""
+        if self._gitignore is None:
+            try:
+                from opendev.core.utils.gitignore import GitIgnoreParser
+
+                self._gitignore = GitIgnoreParser(self.working_dir)
+            except Exception:
+                self._gitignore = False  # sentinel to avoid retrying
+        return self._gitignore if self._gitignore is not False else None
+
+    # Minimal fallback set when GitIgnoreParser is unavailable
+    _FALLBACK_IGNORE_DIRS = {
+        "__pycache__", ".git", "node_modules", ".pytest_cache",
+        ".venv", "venv", ".mypy_cache", ".tox",
+    }
+
+    def _is_gitignored(self, path: str | Path) -> bool:
+        """Check if a path is matched by .gitignore patterns."""
+        gi = self.gitignore
+        p = Path(path) if isinstance(path, str) else path
+        if gi is None:
+            # Fallback: at least filter well-known junk directories
+            return p.name in self._FALLBACK_IGNORE_DIRS
+        if not p.is_absolute():
+            p = self.working_dir / p
+        return gi.is_ignored(p)
 
     def _is_excluded_path(self, file_path: str) -> bool:
         """Check if path contains any excluded directory or matches excluded patterns."""
@@ -235,6 +265,11 @@ class FileOperations:
 
         result = "\n".join(output_parts)
 
+        # Warn if file is gitignored
+        if self._is_gitignored(path):
+            name = path.name
+            result = f"Note: {name} is in .gitignore (not tracked by git).\n\n" + result
+
         # Add truncation message if we didn't show everything
         if end_idx < total_lines:
             result += (
@@ -271,6 +306,8 @@ class FileOperations:
 
         for path in iterator:
             if path.is_file():
+                if self._is_gitignored(path):
+                    continue
                 matches.append(self._format_display_path(path))
                 if len(matches) >= max_results:
                     break
@@ -414,8 +451,10 @@ class FileOperations:
             if not path.is_file():
                 continue
 
-            # Skip excluded paths
+            # Skip excluded and gitignored paths
             if self._is_excluded_path(str(path)):
+                continue
+            if self._is_gitignored(path):
                 continue
 
             try:
@@ -464,20 +503,8 @@ class FileOperations:
         lines = []
         try:
             items = sorted(path.iterdir(), key=lambda p: (not p.is_dir(), p.name))
-            # Filter out common ignore patterns
-            items = [
-                item for item in items
-                if not any(
-                    pattern in item.name
-                    for pattern in [
-                        "__pycache__",
-                        ".git",
-                        "node_modules",
-                        ".pytest_cache",
-                        "*.pyc",
-                    ]
-                )
-            ]
+            # Filter out gitignored and common ignore patterns
+            items = [item for item in items if not self._is_gitignored(item)]
 
             for i, item in enumerate(items):
                 is_last = i == len(items) - 1
@@ -566,8 +593,10 @@ class FileOperations:
                     for item in data:
                         file_path = item.get("file", "")
 
-                        # Skip excluded paths (ast-grep doesn't respect .gitignore)
+                        # Skip excluded and gitignored paths
                         if self._is_excluded_path(file_path):
+                            continue
+                        if self._is_gitignored(file_path):
                             continue
 
                         # Make path relative to working_dir for cleaner output
