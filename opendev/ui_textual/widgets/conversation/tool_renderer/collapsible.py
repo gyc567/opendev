@@ -112,6 +112,8 @@ class CollapsibleMixin:
                     shifted[c.start_line] = c
             self._collapsible_outputs.update(shifted)
 
+        if hasattr(self.log, "_recalculate_virtual_size"):
+            self.log._recalculate_virtual_size()
         self.log.refresh()
 
     def _collapse_output(self, collapsible: "CollapsibleOutput") -> None:
@@ -161,6 +163,8 @@ class CollapsibleMixin:
                     shifted[c.start_line] = c
             self._collapsible_outputs.update(shifted)
 
+        if hasattr(self.log, "_recalculate_virtual_size"):
+            self.log._recalculate_virtual_size()
         self.log.refresh()
 
     def has_collapsible_output(self) -> bool:
