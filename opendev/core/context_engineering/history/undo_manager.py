@@ -1,11 +1,14 @@
 """Undo system for rolling back operations."""
 
 import json
+import logging
 import shutil
 from pathlib import Path
 from typing import Optional
 
 from opendev.models.operation import Operation, OperationType
+
+logger = logging.getLogger(__name__)
 
 
 class UndoResult:
@@ -269,3 +272,71 @@ class UndoManager:
     def get_history_size(self) -> int:
         """Get number of operations in history."""
         return len(self.history)
+
+    def get_revert_preview(self, count: int = 1) -> str:
+        """Get a preview of what the last N undo operations would revert.
+
+        Args:
+            count: Number of recent operations to preview.
+
+        Returns:
+            Human-readable diff summary.
+        """
+        if not self.history:
+            return "No operations to undo."
+
+        ops = self.history[-count:]
+        lines = [f"Would revert {len(ops)} operation(s):"]
+        for op in reversed(ops):
+            op_type = op.type.value if hasattr(op.type, "value") else str(op.type)
+            target = op.target or "unknown"
+            lines.append(f"  - {op_type}: {target}")
+        return "\n".join(lines)
+
+    def revert_with_snapshot(self, snapshot_id: str, project_dir: Path) -> list[str]:
+        """Revert file changes using the SnapshotManager.
+
+        Delegates to the snapshot system to restore files from a previous
+        snapshot, providing reliable per-message revert.
+
+        Args:
+            snapshot_id: The snapshot commit/tree hash to revert to.
+            project_dir: The project directory for the SnapshotManager.
+
+        Returns:
+            List of file paths that were reverted.
+        """
+        from opendev.core.snapshot.manager import SnapshotManager
+
+        try:
+            snapshot_mgr = SnapshotManager(project_dir)
+            reverted = snapshot_mgr.revert_to_snapshot(snapshot_id)
+            if reverted:
+                logger.info(
+                    "Reverted %d file(s) using snapshot %s",
+                    len(reverted),
+                    snapshot_id[:8],
+                )
+            return reverted
+        except Exception:
+            logger.warning("Failed to revert with snapshot %s", snapshot_id, exc_info=True)
+            return []
+
+    def get_changes_summary(self) -> dict:
+        """Get summary stats of all operations in history.
+
+        Returns:
+            Dict with total_operations, unique_files, and by_type breakdown.
+        """
+        files: set[str] = set()
+        op_types: dict[str, int] = {}
+        for op in self.history:
+            if op.target:
+                files.add(op.target)
+            op_type = op.type.value if hasattr(op.type, "value") else str(op.type)
+            op_types[op_type] = op_types.get(op_type, 0) + 1
+        return {
+            "total_operations": len(self.history),
+            "unique_files": len(files),
+            "by_type": op_types,
+        }
