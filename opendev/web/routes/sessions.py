@@ -226,6 +226,9 @@ async def get_session_messages(
             else:
                 raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
 
+        visible_messages = [
+            m for m in session.messages if not m.metadata.get("display_hidden")
+        ]
         return [
             MessageResponse(
                 role=msg.role.value,
@@ -250,7 +253,7 @@ async def get_session_messages(
                 if msg.tool_calls
                 else None,
             )
-            for msg in session.messages
+            for msg in visible_messages
         ]
 
     except HTTPException:
