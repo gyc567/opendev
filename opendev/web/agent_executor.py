@@ -473,7 +473,7 @@ class AgentExecutor:
                                 {
                                     "type": "thinking_block",
                                     "data": {
-                                        "content": f"[Critique]\n{critique.strip()}",
+                                        "content": critique.strip(),
                                         "level": "High",
                                         "session_id": session_id,
                                     },

@@ -113,6 +113,9 @@ class StatusBar(Static):
         self.context_usage_pct: float = 0.0  # 0% = no context used at startup
         self.session_cost: float = 0.0  # Running session cost in USD
         self._git_branch = None
+        self._mcp_connected: int = 0
+        self._mcp_total: int = 0
+        self._mcp_has_errors: bool = False
 
     def on_mount(self) -> None:
         """Update status on mount."""
@@ -203,6 +206,19 @@ class StatusBar(Static):
         self.session_cost = cost
         self.update_status()
 
+    def set_mcp_status(self, connected: int, total: int, has_errors: bool = False) -> None:
+        """Update MCP connection indicator in the status bar.
+
+        Args:
+            connected: Number of currently connected MCP servers.
+            total: Total number of configured MCP servers.
+            has_errors: Whether any server has a connection error.
+        """
+        self._mcp_connected = connected
+        self._mcp_total = total
+        self._mcp_has_errors = has_errors
+        self.update_status()
+
     def update_status(self) -> None:
         """Update status bar text with mode hint, autonomy level, thinking status, repo info, and spinner."""
         mode_color = ORANGE if self.mode == "normal" else GREEN_LIGHT
@@ -243,6 +259,19 @@ class StatusBar(Static):
         if repo_display:
             status.append("  │  ", style=GREY)
             status.append(repo_display, style=BLUE_BRIGHT)
+
+        # MCP indicator (only shown when servers are configured)
+        if self._mcp_total > 0:
+            status.append("  │  ", style=GREY)
+            mcp_label = f"MCP: {self._mcp_connected}/{self._mcp_total}"
+            if self._mcp_has_errors:
+                status.append(mcp_label, style=f"bold {ORANGE_CAUTION}")
+                status.append(" ⚠", style=ORANGE_CAUTION)
+            elif self._mcp_connected < self._mcp_total:
+                status.append(mcp_label, style=f"bold {GOLD}")
+                status.append(" ⚠", style=GOLD)
+            else:
+                status.append(mcp_label, style=f"bold {GREEN_BRIGHT}")
 
         if self.spinner_text:
             status.append("  │  ", style=GREY)

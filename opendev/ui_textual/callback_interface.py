@@ -136,6 +136,10 @@ class UICallbackProtocol(Protocol):
         """Called to update context window usage percentage (0-100)."""
         ...
 
+    def on_cost_update(self, total_cost_usd: float) -> None:
+        """Called to update running session cost in USD."""
+        ...
+
 
 class BaseUICallback:
     """Base implementation of UI callback with no-op methods.
@@ -159,6 +163,10 @@ class BaseUICallback:
 
     def on_thinking(self, content: str) -> None:
         """Called when the model produces thinking content."""
+        pass
+
+    def on_critique(self, content: str) -> None:
+        """Called when the model produces critique content for a thinking trace."""
         pass
 
     def on_assistant_message(self, content: str) -> None:
@@ -262,6 +270,10 @@ class BaseUICallback:
         """Called to update context window usage percentage (0-100)."""
         pass
 
+    def on_cost_update(self, total_cost_usd: float) -> None:
+        """Called to update running session cost in USD."""
+        pass
+
 
 class ForwardingUICallback(BaseUICallback):
     """Base class that forwards all callback methods to a parent.
@@ -312,6 +324,9 @@ class ForwardingUICallback(BaseUICallback):
 
     def on_thinking(self, content: str) -> None:
         self._forward('on_thinking', content)
+
+    def on_critique(self, content: str) -> None:
+        self._forward('on_critique', content)
 
     def on_assistant_message(self, content: str) -> None:
         self._forward('on_assistant_message', content)
@@ -396,6 +411,9 @@ class ForwardingUICallback(BaseUICallback):
 
     def on_context_usage(self, usage_pct: float) -> None:
         self._forward('on_context_usage', usage_pct)
+
+    def on_cost_update(self, total_cost_usd: float) -> None:
+        self._forward('on_cost_update', total_cost_usd)
 
 
 __all__ = ["UICallbackProtocol", "BaseUICallback", "ForwardingUICallback"]

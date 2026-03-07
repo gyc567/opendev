@@ -222,6 +222,27 @@ class WebUICallback(BaseUICallback):
     # Interrupt
     # ------------------------------------------------------------------
 
+    # ------------------------------------------------------------------
+    # Thinking / Critique
+    # ------------------------------------------------------------------
+
+    def on_critique(self, content: str) -> None:
+        """Broadcast critique content as a thinking_block to the frontend."""
+        if not content or not content.strip():
+            return
+        self._broadcast({
+            "type": "thinking_block",
+            "data": {
+                "content": content.strip(),
+                "level": "High",
+                "session_id": self.session_id,
+            },
+        })
+
+    # ------------------------------------------------------------------
+    # Interrupt
+    # ------------------------------------------------------------------
+
     def on_interrupt(self, context: Any = None) -> None:
         self._broadcast({
             "type": "status_update",

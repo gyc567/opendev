@@ -163,7 +163,7 @@ class TextualUICallback(
 
         # Display critique block with special styling (reuse thinking block with prefix)
         if hasattr(self.conversation, "add_thinking_block"):
-            self._run_on_ui(self.conversation.add_thinking_block, f"[Critique]\n{content}")
+            self._run_on_ui(self.conversation.add_thinking_block, content)
 
         # Restart spinner for the next phase — but NOT if interrupted
         should_restart = True
