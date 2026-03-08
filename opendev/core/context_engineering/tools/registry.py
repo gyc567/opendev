@@ -22,11 +22,19 @@ from opendev.core.context_engineering.tools.handlers.todo_handler import TodoHan
 from opendev.core.context_engineering.tools.handlers.thinking_handler import ThinkingHandler
 from opendev.core.context_engineering.tools.handlers.search_tools_handler import SearchToolsHandler
 from opendev.core.context_engineering.tools.handlers.batch_handler import BatchToolHandler
+from opendev.core.context_engineering.tools.handlers.memory_handlers import MemoryToolHandler
+from opendev.core.context_engineering.tools.handlers.session_handlers import SessionToolHandler
+from opendev.core.context_engineering.tools.handlers.git_handlers import GitToolHandler
+from opendev.core.context_engineering.tools.handlers.browser_handlers import BrowserToolHandler
+from opendev.core.context_engineering.tools.handlers.schedule_handlers import ScheduleToolHandler
+from opendev.core.context_engineering.tools.handlers.message_handlers import MessageToolHandler
 
 if TYPE_CHECKING:
     from opendev.core.skills import SkillLoader
 
 logger = logging.getLogger(__name__)
+from opendev.core.context_engineering.tools.implementations.agents_tool import AgentsTool
+from opendev.core.context_engineering.tools.implementations.patch_tool import PatchTool
 from opendev.core.context_engineering.tools.implementations.pdf_tool import PDFTool
 from opendev.core.context_engineering.tools.implementations.task_complete_tool import (
     TaskCompleteTool,
@@ -84,6 +92,8 @@ class ToolRegistry:
         self.todo_handler = TodoHandler()
         self.thinking_handler = ThinkingHandler()
         self._pdf_tool = PDFTool()
+        self._agents_tool = AgentsTool()
+        self._patch_tool = PatchTool()
         self._task_complete_tool = TaskCompleteTool()
         self._present_plan_tool = PresentPlanTool()
         self._subagent_manager: Union[Any, None] = None
@@ -102,6 +112,12 @@ class ToolRegistry:
             mcp_manager=mcp_manager,
             on_discover=self.discover_mcp_tool,
         )
+        self._git_handler = GitToolHandler()
+        self._browser_handler = BrowserToolHandler()
+        self._schedule_handler = ScheduleToolHandler()
+        self._message_handler = MessageToolHandler()
+        self._memory_handler = MemoryToolHandler()
+        self._session_handler = SessionToolHandler()
         self._batch_handler: Union[BatchToolHandler, None] = None  # Lazy init after registry ready
 
         self.set_mcp_manager(mcp_manager)
@@ -150,8 +166,27 @@ class ToolRegistry:
             "present_plan": self._execute_present_plan,
             # Skills system tool
             "invoke_skill": self._handle_invoke_skill,
+            # Git tool
+            "git": self._git_handler.handle,
+            # Browser automation
+            "browser": self._browser_handler.handle,
+            # Schedule tool
+            "schedule": self._schedule_handler.handle,
+            # Message tool
+            "send_message": self._message_handler.handle,
+            # Memory tools
+            "memory_search": self._memory_handler.search,
+            "memory_write": self._memory_handler.write,
+            # Session inspection tools
+            "list_sessions": self._session_handler.list_sessions,
+            "get_session_history": self._session_handler.get_session_history,
+            "list_subagents": self._session_handler.list_subagents,
             # Batch tool for parallel/serial multi-tool execution
             "batch_tool": self._execute_batch_tool,
+            # Agents listing
+            "list_agents": self._handle_list_agents,
+            # Apply patch
+            "apply_patch": self._handle_apply_patch,
         }
 
         # Initialize batch handler now that _handlers is set up
@@ -164,6 +199,7 @@ class ToolRegistry:
             manager: SubAgentManager instance
         """
         self._subagent_manager = manager
+        self._session_handler.set_subagent_manager(manager)
 
     def get_subagent_manager(self) -> Union[Any, None]:
         """Get the subagent manager.
@@ -492,6 +528,13 @@ class ToolRegistry:
                 if outcome.updated_input and isinstance(outcome.updated_input, dict):
                     arguments = {**arguments, **outcome.updated_input}
 
+        # --- Parameter normalization ---
+        from opendev.core.context_engineering.tools.param_normalizer import normalize_params
+        working_dir = None
+        if hasattr(self, 'file_ops') and self.file_ops and hasattr(self.file_ops, 'working_dir'):
+            working_dir = str(self.file_ops.working_dir) if self.file_ops.working_dir else None
+        arguments = normalize_params(tool_name, arguments, working_dir)
+
         context = ToolExecutionContext(
             mode_manager=mode_manager,
             approval_manager=approval_manager,
@@ -511,6 +554,7 @@ class ToolRegistry:
             elif tool_name in {
                 "write_file", "edit_file", "read_file",
                 "run_command", "batch_tool", "present_plan",
+                "list_sessions", "get_session_history",
             }:
                 # Handlers requiring context
                 result = handler(arguments, context)
@@ -854,3 +898,18 @@ class ToolRegistry:
             "skill_name": skill.metadata.name,
             "skill_namespace": skill.metadata.namespace,
         }
+
+    def _handle_list_agents(
+        self, arguments: dict[str, Any], context: Any = None
+    ) -> dict[str, Any]:
+        """List available subagent types."""
+        return self._agents_tool.list_agents(subagent_manager=self._subagent_manager)
+
+    def _handle_apply_patch(
+        self, arguments: dict[str, Any], context: Any = None
+    ) -> dict[str, Any]:
+        """Apply a unified diff patch."""
+        return self._patch_tool.apply_patch(
+            patch=arguments.get("patch", ""),
+            dry_run=arguments.get("dry_run", False),
+        )

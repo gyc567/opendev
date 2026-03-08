@@ -32,6 +32,8 @@ PARALLELIZABLE_TOOLS = frozenset(
 class RunLoopMixin:
     """Mixin for the main agent run loop."""
 
+    _result_sanitizer = None  # Lazy init
+
     def inject_user_message(self, text: str) -> None:
         """Inject a user message into the running agent loop.
 
@@ -106,6 +108,13 @@ class RunLoopMixin:
     @staticmethod
     def _format_tool_result(tool_name: str, result: dict) -> str:
         """Format a tool execution result into a string for the message history."""
+        # Apply sanitization to prevent context bloat
+        from opendev.core.context_engineering.tools.result_sanitizer import ToolResultSanitizer
+
+        if RunLoopMixin._result_sanitizer is None:
+            RunLoopMixin._result_sanitizer = ToolResultSanitizer()
+        result = RunLoopMixin._result_sanitizer.sanitize(tool_name, result)
+
         separate_response = result.get("separate_response")
         if result["success"]:
             tool_result = separate_response if separate_response else result.get("output", "")
@@ -166,6 +175,7 @@ class RunLoopMixin:
                     mode_manager=deps.mode_manager,
                     approval_manager=deps.approval_manager,
                     undo_manager=deps.undo_manager,
+                    session_manager=deps.session_manager,
                     task_monitor=task_monitor,
                     is_subagent=is_subagent,
                     ui_callback=ui_callback,
@@ -578,6 +588,7 @@ class RunLoopMixin:
                         mode_manager=deps.mode_manager,
                         approval_manager=deps.approval_manager,
                         undo_manager=deps.undo_manager,
+                        session_manager=deps.session_manager,
                         task_monitor=task_monitor,
                         is_subagent=is_subagent,
                         ui_callback=ui_callback,

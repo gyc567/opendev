@@ -26,3 +26,6 @@ PLANNING_TOOLS = {
     # Task completion (always allowed - agents must signal completion)
     "task_complete",
 }
+# NOTE: PLANNING_TOOLS corresponds to ToolPolicy.resolve("minimal") + "spawn_subagent".
+# The profile system in tool_policy.py provides a more flexible way to define
+# tool access levels. This set is kept for backward compatibility.

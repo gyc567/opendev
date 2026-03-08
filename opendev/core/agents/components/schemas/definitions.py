@@ -659,6 +659,102 @@ _BUILTIN_TOOL_SCHEMAS: list[dict[str, Any]] = [
             },
         },
     },
+    # ===== Browser Automation Tool =====
+    {
+        "type": "function",
+        "function": {
+            "name": "browser",
+            "description": load_tool_description("browser"),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["navigate", "click", "type", "fill", "screenshot", "get_text", "wait", "evaluate", "tabs_list", "tab_close", "back", "forward", "reload"],
+                        "description": "Browser action to perform",
+                    },
+                    "target": {
+                        "type": "string",
+                        "description": "Target for the action: URL (navigate), CSS selector (click/type/fill/wait/get_text/screenshot), tab index (tab_close), or JS expression (evaluate)",
+                    },
+                    "value": {
+                        "type": "string",
+                        "description": "Value for the action: text (type/fill) or JavaScript code (evaluate)",
+                    },
+                    "timeout": {
+                        "type": "integer",
+                        "description": "Action timeout in milliseconds (default: 10000)",
+                        "default": 10000,
+                    },
+                },
+                "required": ["action"],
+            },
+        },
+    },
+    # ===== Schedule Tool =====
+    {
+        "type": "function",
+        "function": {
+            "name": "schedule",
+            "description": load_tool_description("schedule"),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["list", "add", "remove", "run_now", "status"],
+                        "description": "Schedule action to perform",
+                    },
+                    "name": {
+                        "type": "string",
+                        "description": "Schedule name (for add/remove/run_now)",
+                    },
+                    "cron": {
+                        "type": "string",
+                        "description": "Cron expression (for add). Format: minute hour day-of-month month day-of-week",
+                    },
+                    "command": {
+                        "type": "string",
+                        "description": "Shell command to run (for add)",
+                    },
+                },
+                "required": ["action"],
+            },
+        },
+    },
+    # ===== Message Tool =====
+    {
+        "type": "function",
+        "function": {
+            "name": "send_message",
+            "description": load_tool_description("send_message"),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "channel": {
+                        "type": "string",
+                        "enum": ["slack", "discord", "webhook"],
+                        "description": "Channel to send to",
+                    },
+                    "message": {
+                        "type": "string",
+                        "description": "Message content",
+                    },
+                    "target": {
+                        "type": "string",
+                        "description": "Webhook URL (overrides configured default)",
+                    },
+                    "format": {
+                        "type": "string",
+                        "enum": ["text", "markdown"],
+                        "description": "Message format",
+                        "default": "text",
+                    },
+                },
+                "required": ["channel", "message"],
+            },
+        },
+    },
     # ===== PDF Tool =====
     {
         "type": "function",
@@ -827,6 +923,243 @@ _BUILTIN_TOOL_SCHEMAS: list[dict[str, Any]] = [
                     },
                 },
                 "required": ["symbol_name", "file_path", "new_name"],
+            },
+        },
+    },
+    # ===== Git Tool =====
+    {
+        "type": "function",
+        "function": {
+            "name": "git",
+            "description": load_tool_description("git"),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": [
+                            "status",
+                            "diff",
+                            "log",
+                            "branch",
+                            "checkout",
+                            "commit",
+                            "push",
+                            "pull",
+                            "stash",
+                            "merge",
+                            "create_pr",
+                        ],
+                        "description": "Git action to perform",
+                    },
+                    "branch": {
+                        "type": "string",
+                        "description": "Branch name (for checkout, merge, push, branch)",
+                    },
+                    "message": {
+                        "type": "string",
+                        "description": "Commit message (for commit) or stash message (for stash push)",
+                    },
+                    "file": {
+                        "type": "string",
+                        "description": "File path (for diff)",
+                    },
+                    "staged": {
+                        "type": "boolean",
+                        "description": "Show staged changes only (for diff)",
+                        "default": False,
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Number of entries to show (for log)",
+                        "default": 10,
+                    },
+                    "remote": {
+                        "type": "string",
+                        "description": "Remote name (for push/pull)",
+                        "default": "origin",
+                    },
+                    "force": {
+                        "type": "boolean",
+                        "description": "Force push (uses --force-with-lease). Blocked for protected branches.",
+                        "default": False,
+                    },
+                    "create": {
+                        "type": "boolean",
+                        "description": "Create new branch (for checkout -b)",
+                        "default": False,
+                    },
+                    "title": {
+                        "type": "string",
+                        "description": "PR title (for create_pr)",
+                    },
+                    "body": {
+                        "type": "string",
+                        "description": "PR body/description (for create_pr)",
+                    },
+                    "base": {
+                        "type": "string",
+                        "description": "Base branch for PR (for create_pr)",
+                    },
+                    "name": {
+                        "type": "string",
+                        "description": "Branch name (for branch create/delete)",
+                    },
+                    "delete": {
+                        "type": "boolean",
+                        "description": "Delete the branch (for branch)",
+                        "default": False,
+                    },
+                },
+                "required": ["action"],
+            },
+        },
+    },
+    # ===== Memory Tools =====
+    {
+        "type": "function",
+        "function": {
+            "name": "memory_search",
+            "description": load_tool_description("memory_search"),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Search query — matches against content in all memory files",
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "description": "Maximum number of results to return (default: 5)",
+                        "default": 5,
+                    },
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "memory_write",
+            "description": load_tool_description("memory_write"),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "topic": {
+                        "type": "string",
+                        "description": "Topic name for the memory entry (used to generate filename)",
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "Content to write to the memory file",
+                    },
+                    "file": {
+                        "type": "string",
+                        "description": "Optional specific filename (e.g., 'patterns.md'). Auto-generated from topic if not specified.",
+                    },
+                    "scope": {
+                        "type": "string",
+                        "enum": ["project", "user"],
+                        "description": "Scope level: 'project' (.opendev/memory/) or 'user' (~/.opendev/memory/)",
+                        "default": "project",
+                    },
+                },
+                "required": ["topic", "content"],
+            },
+        },
+    },
+    # ===== Session Inspection Tools =====
+    {
+        "type": "function",
+        "function": {
+            "name": "list_sessions",
+            "description": load_tool_description("list_sessions"),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of sessions to return (default: 20)",
+                        "default": 20,
+                    },
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_session_history",
+            "description": load_tool_description("get_session_history"),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "session_id": {
+                        "type": "string",
+                        "description": "ID of the session to read (from list_sessions)",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of messages to return (default: 50)",
+                        "default": 50,
+                    },
+                    "include_tool_calls": {
+                        "type": "boolean",
+                        "description": "Include tool call details in output (default: false)",
+                        "default": False,
+                    },
+                },
+                "required": ["session_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_subagents",
+            "description": load_tool_description("list_subagents"),
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+            },
+        },
+    },
+    # ===== Agents Listing Tool =====
+    {
+        "type": "function",
+        "function": {
+            "name": "list_agents",
+            "description": load_tool_description("list_agents"),
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+            },
+        },
+    },
+    # ===== Apply Patch Tool =====
+    {
+        "type": "function",
+        "function": {
+            "name": "apply_patch",
+            "description": load_tool_description("apply_patch"),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "patch": {
+                        "type": "string",
+                        "description": "Unified diff patch content",
+                    },
+                    "dry_run": {
+                        "type": "boolean",
+                        "description": "Validate patch without applying (default: false)",
+                        "default": False,
+                    },
+                },
+                "required": ["patch"],
             },
         },
     },

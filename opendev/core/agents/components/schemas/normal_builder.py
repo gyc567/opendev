@@ -10,6 +10,7 @@ from copy import deepcopy
 from typing import Any, Sequence, Union
 
 from .definitions import _BUILTIN_TOOL_SCHEMAS
+from opendev.core.agents.components.schemas.schema_adapter import adapt_for_provider
 
 
 class ToolSchemaBuilder:
@@ -19,6 +20,7 @@ class ToolSchemaBuilder:
         self,
         tool_registry: Union[Any, None],
         allowed_tools: Union[list[str], None] = None,
+        provider: Union[str, None] = None,
     ) -> None:
         """Initialize the tool schema builder.
 
@@ -27,9 +29,11 @@ class ToolSchemaBuilder:
             allowed_tools: Optional list of allowed tool names for filtering.
                           If None, all tools are allowed. Used by subagents
                           to restrict available tools.
+            provider: LLM provider name for schema adaptation (e.g., "gemini", "xai").
         """
         self._tool_registry = tool_registry
         self._allowed_tools = allowed_tools
+        self._provider = provider
 
     def build(self, thinking_visible: bool = True) -> list[dict[str, Any]]:
         """Return tool schema definitions including MCP and task tool extensions.
@@ -69,6 +73,11 @@ class ToolSchemaBuilder:
                     schema for schema in mcp_schemas if schema["function"]["name"] in allowed_set
                 ]
             schemas.extend(mcp_schemas)
+
+        # Apply provider-specific schema adaptations
+        if self._provider:
+            schemas = adapt_for_provider(schemas, self._provider)
+
         return schemas
 
     def _build_task_schema(self) -> dict[str, Any] | None:
