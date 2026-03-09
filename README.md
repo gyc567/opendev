@@ -29,11 +29,13 @@ Work is organized into concurrent sessions composed of specialized sub-agents. E
 
 Each workflow is a modular slot you can bind to any LLM of your choice: **Normal** (execution), **Thinking** (reasoning), **Compact** (context summarization), **Self-Critique** (output verification), and **VLM** (vision). For example, use Claude Opus for execution, GPT-o3 for thinking, and a lightweight Qwen model for compaction. Together, these combinations form a compound AI system where multiple models collaborate, each optimized for its role.
 
+OpenDev is currently written in **Python**, with a planned rewrite in **Rust** in the near future.
+
+
 <p align="center">
   <img src="figures/top.png" alt="OpenDev Compound AI Architecture" width="700"/>
 </p>
 
-OpenDev is currently written in Python, with a planned rewrite in Rust in the near future.
 
 ---
 
