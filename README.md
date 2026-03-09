@@ -122,3 +122,17 @@ cd web-ui && npm run build
 ### Contributing
 
 If you're interested in contributing to OpenDev, please open an issue or submit a pull request.
+
+---
+
+### Star History
+
+<p align="center">
+  <a href="https://star-history.com/#opendev-to/opendev&Date">
+   <picture>
+     <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=opendev-to/opendev&type=Date&theme=dark" />
+     <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=opendev-to/opendev&type=Date" />
+     <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=opendev-to/opendev&type=Date" />
+   </picture>
+  </a>
+</p>
