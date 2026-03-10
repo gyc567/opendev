@@ -74,9 +74,7 @@ class ToolProcessingMixin:
         doom_warning = self._detect_doom_loop(tool_calls, ctx)
         if doom_warning:
             ctx.doom_loop_nudge_count += 1
-            _debug_log(
-                f"[DOOM_LOOP] nudge_count={ctx.doom_loop_nudge_count}: {doom_warning}"
-            )
+            _debug_log(f"[DOOM_LOOP] nudge_count={ctx.doom_loop_nudge_count}: {doom_warning}")
 
             if ctx.doom_loop_nudge_count >= 3:
                 # Third strike — force stop
@@ -85,14 +83,16 @@ class ToolProcessingMixin:
                         f"Agent stuck in loop after multiple recovery attempts. "
                         f"Stopping. {doom_warning}"
                     )
-                ctx.messages.append({
-                    "role": "user",
-                    "content": (
-                        f"[SYSTEM] {doom_warning}\n"
-                        "You have been stuck in a loop despite multiple warnings. "
-                        "STOP and explain what you're trying to do."
-                    ),
-                })
+                ctx.messages.append(
+                    {
+                        "role": "user",
+                        "content": (
+                            f"[SYSTEM] {doom_warning}\n"
+                            "You have been stuck in a loop despite multiple warnings. "
+                            "STOP and explain what you're trying to do."
+                        ),
+                    }
+                )
                 ctx.recent_tool_calls.clear()
                 return LoopAction.BREAK
 
@@ -102,15 +102,17 @@ class ToolProcessingMixin:
                     ctx.ui_callback.on_message(f"Agent may be stuck: {doom_warning}")
 
             # Inject guidance (first and second nudge)
-            ctx.messages.append({
-                "role": "user",
-                "content": (
-                    f"[SYSTEM WARNING] {doom_warning}\n"
-                    "You appear to be repeating the same action without progress. "
-                    "Please try a completely different approach or explain what "
-                    "you're trying to accomplish so we can find a better path."
-                ),
-            })
+            ctx.messages.append(
+                {
+                    "role": "user",
+                    "content": (
+                        f"[SYSTEM WARNING] {doom_warning}\n"
+                        "You appear to be repeating the same action without progress. "
+                        "Please try a completely different approach or explain what "
+                        "you're trying to accomplish so we can find a better path."
+                    ),
+                }
+            )
             ctx.recent_tool_calls.clear()
             return LoopAction.CONTINUE
 
@@ -170,7 +172,13 @@ class ToolProcessingMixin:
         ctx.consecutive_reads = ctx.consecutive_reads + 1 if all_reads else 0
 
         # Explore-first enforcement: block excessive exploration reads
-        if not ctx.has_explored and all_reads and ctx.consecutive_reads >= 3:
+        # Skip after plan approval — the planning phase already explored the codebase
+        if (
+            not ctx.has_explored
+            and not ctx.plan_approved_signal_injected
+            and all_reads
+            and ctx.consecutive_reads >= 3
+        ):
             # Block execution — tell agent to use Code-Explorer instead
             for tc in tool_calls:
                 append_nudge(
@@ -185,7 +193,7 @@ class ToolProcessingMixin:
 
         # Explore-first enforcement: block task subagent spawns until Code-Explorer has run
         EXPLORE_EXEMPT_SUBAGENTS = {"Code-Explorer", "ask-user"}
-        if not ctx.has_explored:
+        if not ctx.has_explored and not ctx.plan_approved_signal_injected:
             for tc in tool_calls:
                 if tc["function"]["name"] == "spawn_subagent":
                     try:
@@ -568,9 +576,7 @@ class ToolProcessingMixin:
                 try:
                     result = future.result()
                 except InterruptedError:
-                    result = {
-                        "success": False, "error": "Interrupted by user", "interrupted": True
-                    }
+                    result = {"success": False, "error": "Interrupted by user", "interrupted": True}
                 except Exception as e:
                     result = {"success": False, "error": str(e)}
 
@@ -601,9 +607,7 @@ class ToolProcessingMixin:
                 try:
                     result = future.result()
                 except InterruptedError:
-                    result = {
-                        "success": False, "error": "Interrupted by user", "interrupted": True
-                    }
+                    result = {"success": False, "error": "Interrupted by user", "interrupted": True}
                 except Exception as e:
                     result = {"success": False, "error": str(e)}
                 tool_results_by_id[tool_call["id"]] = result

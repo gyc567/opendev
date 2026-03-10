@@ -15,7 +15,9 @@ from opendev.core.context_engineering.mcp.handler import McpToolHandler
 from opendev.core.context_engineering.tools.handlers.process_handlers import ProcessToolHandler
 from opendev.core.context_engineering.tools.handlers.web_handlers import WebToolHandler
 from opendev.core.context_engineering.tools.handlers.web_search_handler import WebSearchHandler
-from opendev.core.context_engineering.tools.handlers.notebook_edit_handler import NotebookEditHandler
+from opendev.core.context_engineering.tools.handlers.notebook_edit_handler import (
+    NotebookEditHandler,
+)
 from opendev.core.context_engineering.tools.handlers.ask_user_handler import AskUserHandler
 from opendev.core.context_engineering.tools.handlers.screenshot_handler import ScreenshotToolHandler
 from opendev.core.context_engineering.tools.handlers.todo_handler import TodoHandler
@@ -50,6 +52,7 @@ from opendev.core.context_engineering.tools.symbol_tools import (
     handle_replace_symbol_body,
     handle_rename_symbol,
 )
+
 
 class ToolRegistry:
     """Dispatches tool invocations to dedicated handlers."""
@@ -102,6 +105,7 @@ class ToolRegistry:
 
         # FileTime stale-read detection (shared across the session)
         from opendev.core.context_engineering.tools.file_time import FileTimeTracker
+
         self._file_time_tracker = FileTimeTracker()
         self._invoked_skills: set[str] = set()  # Track skills already loaded in this session
 
@@ -334,7 +338,10 @@ class ToolRegistry:
 
         # Save subagent conversation as a child session for navigation (Ctrl+G)
         self._save_subagent_session(
-            result, subagent_type, tool_call_id, context,
+            result,
+            subagent_type,
+            tool_call_id,
+            context,
         )
 
         # Format output for consistency
@@ -531,8 +538,9 @@ class ToolRegistry:
 
         # --- Parameter normalization ---
         from opendev.core.context_engineering.tools.param_normalizer import normalize_params
+
         working_dir = None
-        if hasattr(self, 'file_ops') and self.file_ops and hasattr(self.file_ops, 'working_dir'):
+        if hasattr(self, "file_ops") and self.file_ops and hasattr(self.file_ops, "working_dir"):
             working_dir = str(self.file_ops.working_dir) if self.file_ops.working_dir else None
         arguments = normalize_params(tool_name, arguments, working_dir)
 
@@ -553,9 +561,14 @@ class ToolRegistry:
                 # spawn_subagent needs tool_call_id for parent context tracking
                 result = self._execute_spawn_subagent(arguments, context, tool_call_id)
             elif tool_name in {
-                "write_file", "edit_file", "read_file",
-                "run_command", "batch_tool", "present_plan",
-                "list_sessions", "get_session_history",
+                "write_file",
+                "edit_file",
+                "read_file",
+                "run_command",
+                "batch_tool",
+                "present_plan",
+                "list_sessions",
+                "get_session_history",
             }:
                 # Handlers requiring context
                 result = handler(arguments, context)
@@ -900,15 +913,11 @@ class ToolRegistry:
             "skill_namespace": skill.metadata.namespace,
         }
 
-    def _handle_list_agents(
-        self, arguments: dict[str, Any], context: Any = None
-    ) -> dict[str, Any]:
+    def _handle_list_agents(self, arguments: dict[str, Any], context: Any = None) -> dict[str, Any]:
         """List available subagent types."""
         return self._agents_tool.list_agents(subagent_manager=self._subagent_manager)
 
-    def _handle_apply_patch(
-        self, arguments: dict[str, Any], context: Any = None
-    ) -> dict[str, Any]:
+    def _handle_apply_patch(self, arguments: dict[str, Any], context: Any = None) -> dict[str, Any]:
         """Apply a unified diff patch."""
         return self._patch_tool.apply_patch(
             patch=arguments.get("patch", ""),

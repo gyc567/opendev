@@ -108,6 +108,11 @@ Work through the todos in order:
 Do NOT mark a todo as done without implementing it. Each todo requires actual code changes.
 </plan_approved>
 
+--- thinking_analysis_prompt_plan_execution ---
+The user's original request: {original_task}
+
+You are executing an approved plan. Analyze the context and provide your reasoning for the next step. Focus on WHAT to implement, not on exploring. Work through the plan steps in order.
+
 --- all_todos_complete_nudge ---
 All implementation todos are now complete. Call task_complete with a summary of what was accomplished.
 
