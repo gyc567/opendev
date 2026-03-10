@@ -95,7 +95,7 @@ function summarizeToolArgs(toolName: string, toolArgs: any): string {
     'list_files': ['path', 'directory'],
     'list_directory': ['path', 'directory'],
     'search_code': ['pattern', 'query'],
-    'search': ['query'],
+    'search': ['pattern', 'query'],
     'run_command': ['command'],
     'bash_execute': ['command'],
     'fetch_url': ['url'],
@@ -105,7 +105,7 @@ function summarizeToolArgs(toolName: string, toolArgs: any): string {
     'analyze_image': ['image_path', 'file_path'],
     'git_commit': ['message'],
     'present_plan': ['plan_file_path'],
-    'spawn_subagent': ['agent_type', 'description'],
+    'spawn_subagent': ['subagent_type', 'description'],
     'task_complete': ['summary'],
     'invoke_skill': ['skill_name'],
     'get_process_output': ['pid', 'command'],
@@ -184,6 +184,20 @@ function formatToolResult(toolName: string, toolArgs: any, result: any): string[
     return formatEditFileResult(toolArgs, result);
   } else if (toolName === 'apply_patch') {
     return formatEditFileResult(toolArgs, result);
+  } else if (toolName === 'list_todos') {
+    return formatListTodosResult(toolArgs, result);
+  } else if (toolName === 'search_tools') {
+    return formatSearchToolsResult(toolArgs, result);
+  } else if (toolName === 'analyze_image') {
+    return [result?.summary || 'Analysis complete'];
+  } else if (toolName === 'get_process_output') {
+    return formatGenericResult(toolArgs, result);
+  } else if (toolName === 'list_directory') {
+    return formatListFilesResult(toolArgs, result);
+  } else if (toolName === 'delete_file') {
+    const filePath = toolArgs?.file_path || toolArgs?.path || 'unknown';
+    const fileName = filePath.split('/').pop() || filePath;
+    return [`Deleted ${fileName}`];
   } else {
     return formatGenericResult(toolArgs, result);
   }
@@ -326,12 +340,12 @@ function formatPresentPlanResult(_toolArgs: any, result: any): string[] {
   if (result?.plan_rejected) {
     return ['Plan rejected'];
   }
-  return [result?.output || 'Plan presented'];
+  return [typeof result?.output === 'string' ? result.output : 'Plan presented'];
 }
 
 function formatSpawnSubagentResult(toolArgs: any, result: any): string[] {
-  const agentType = toolArgs?.agent_type || 'unknown';
-  const output = result?.output || '';
+  const agentType = toolArgs?.subagent_type || toolArgs?.agent_type || 'agent';
+  const output = typeof result?.output === 'string' ? result.output : '';
   if (result?.success === false) {
     return [`${agentType} agent failed`];
   }
@@ -343,7 +357,8 @@ function formatSpawnSubagentResult(toolArgs: any, result: any): string[] {
 }
 
 function formatTaskCompleteResult(_toolArgs: any, result: any): string[] {
-  const summary = result?.output || result?.summary || '';
+  const raw = result?.output || result?.summary || '';
+  const summary = typeof raw === 'string' ? raw : String(raw);
   if (summary) {
     return [summary.length > 100 ? summary.slice(0, 97) + '...' : summary];
   }
@@ -361,6 +376,24 @@ function formatTodoUpdateResult(toolName: string, toolArgs: any, _result: any): 
   const label = id !== undefined ? `todo-${Number(id) + 1}` : 'todo';
   const action = toolName === 'complete_todo' ? 'Completed' : 'Updated';
   return [`${action} ${label}`];
+}
+
+function formatListTodosResult(_toolArgs: any, result: any): string[] {
+  const output = result?.output || '';
+  const active = (output.match(/○/g) || []).length;
+  const doing = (output.match(/▶/g) || []).length;
+  const done = (output.match(/✓/g) || []).length;
+  const total = active + doing + done;
+  return total > 0 ? [`${total} todo(s) (${active} pending, ${doing} active, ${done} done)`] : ['No todos'];
+}
+
+function formatSearchToolsResult(_toolArgs: any, result: any): string[] {
+  const output = result?.output || '';
+  const lines = output.split('\n').filter((l: string) => l.trim());
+  const toolCount = lines.filter((l: string) => l.startsWith('  - ') || l.startsWith('• ')).length;
+  if (toolCount > 0) return [`Found ${toolCount} tool(s)`];
+  if (output.includes('Found')) return [lines[0]];
+  return ['Search complete'];
 }
 
 function formatGenericResult(_toolArgs: any, result: any): string[] {
@@ -412,10 +445,26 @@ export function ToolCallMessage({ message, hasResult }: ToolCallMessageExtProps)
     const summaryOverride = message.tool_summary;
     const successOverride = message.tool_success;
 
-    const { verb } = getToolDisplayParts(toolName);
-    const summary =
+    let { verb } = getToolDisplayParts(toolName);
+    let summary =
       message.tool_args_display ??
       summarizeToolArgs(toolName, toolArgs);
+
+    // format_tool_call returns "Verb(args)" — extract just the args part
+    if (summary && summary.includes('(') && summary.endsWith(')')) {
+      const parenIdx = summary.indexOf('(');
+      summary = summary.slice(parenIdx + 1, -1);
+    }
+
+    // For spawn_subagent, use subagent type as verb and description as summary
+    // to match TUI: "code-explorer(Auth flow overview)" → "▶ Code Explorer  Auth flow overview"
+    if (toolName === 'spawn_subagent') {
+      const subagentType = toolArgs?.subagent_type || toolArgs?.agent_type || '';
+      if (subagentType) {
+        verb = subagentType.split(/[-_]/).map((w: string) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+        summary = toolArgs?.description || '';
+      }
+    }
 
     // Handle result processing
     let resultData = toolResult;
@@ -487,18 +536,27 @@ export function ToolCallMessage({ message, hasResult }: ToolCallMessageExtProps)
           )}
         </div>
 
+        {/* Subagent in-progress spinner */}
+        {toolName === 'spawn_subagent' && hasResult === false && (
+          <div className="ml-4 pl-3 border-l-2 border-border-300/30 flex items-center gap-2">
+            <span className="inline-block w-3 h-3 border-2 border-accent-100/60 border-t-transparent rounded-full animate-spin" />
+            <span className="text-text-300 text-sm font-mono">Running...</span>
+          </div>
+        )}
+
         {/* Tool result summary with proper colors */}
-        {summaryLines.length > 0 && (
+        {!(toolName === 'spawn_subagent' && hasResult === false) && summaryLines.length > 0 && (
           <div className="ml-4 pl-3 border-l-2 border-border-300/30">
             {summaryLines.map((line: string, index: number) => {
+              const lineStr = typeof line === 'string' ? line : String(line);
               // Check if this line indicates success or failure
               const isSuccess = successOverride ?? (
-                line.includes('Read') || line.includes('Created') || line.includes('Updated') ||
-                line.includes('Changes') || line.includes('Packages installed') || line.includes('completed')
+                lineStr.includes('Read') || lineStr.includes('Created') || lineStr.includes('Updated') ||
+                lineStr.includes('Changes') || lineStr.includes('Packages installed') || lineStr.includes('completed')
               );
               const isError = message.tool_error
                 ? true
-                : line.includes('Error') || line.includes('Failed') || line.includes('interrupted') || line.includes('Exit code');
+                : lineStr.includes('Error') || lineStr.includes('Failed') || lineStr.includes('interrupted') || lineStr.includes('Exit code');
 
               return (
                 <div key={index} className={`font-mono text-sm mb-1 leading-6 ${
@@ -506,7 +564,7 @@ export function ToolCallMessage({ message, hasResult }: ToolCallMessageExtProps)
                   isSuccess ? 'text-success-100' :
                   'text-text-300'
                 }`}>
-                  {line}
+                  {lineStr}
                 </div>
               );
             })}
