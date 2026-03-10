@@ -88,11 +88,12 @@ class IterationContext:
     plan_approved_signal_injected: bool = False
     all_todos_complete_nudged: bool = False
     completion_nudge_sent: bool = False
+    skip_next_thinking: bool = False
     continue_after_subagent: bool = False  # If True, don't inject stop signal after subagent
     has_explored: bool = False  # True after Code-Explorer has been spawned
     # Doom-loop detection: track recent (tool_name, args_hash) tuples
     recent_tool_calls: deque = field(default_factory=lambda: deque(maxlen=20))
-    doom_loop_warned: bool = False  # True if user already chose to continue
+    doom_loop_nudge_count: int = 0  # How many times we've auto-nudged
 
 
 class ReactExecutor(ThinkingMixin, ToolProcessingMixin, SessionPersistenceMixin, IterationMixin):
@@ -127,17 +128,31 @@ class ReactExecutor(ThinkingMixin, ToolProcessingMixin, SessionPersistenceMixin,
 
     def __init__(
         self,
-        console: "Console",
         session_manager: "SessionManager",
         config: "Config",
-        llm_caller: "LLMCaller",
-        tool_executor: "ToolExecutor",
+        mode_manager,
+        console: Optional["Console"] = None,
+        llm_caller: Optional["LLMCaller"] = None,
+        tool_executor: Optional["ToolExecutor"] = None,
         cost_tracker: Optional["CostTracker"] = None,
+        parallel_executor=None,
     ):
-        """Initialize ReAct executor."""
+        """Initialize ReAct executor.
+
+        Args:
+            session_manager: Session manager for conversation persistence.
+            config: Application configuration.
+            mode_manager: Mode manager for plan/normal mode control.
+            console: Rich console for TUI output (None for Web UI).
+            llm_caller: LLM caller with progress display (None for Web UI).
+            tool_executor: Tool executor for TUI (None for Web UI).
+            cost_tracker: Optional cost tracker.
+            parallel_executor: Optional shared ThreadPoolExecutor for parallel tools.
+        """
         self.console = console
         self.session_manager = session_manager
         self.config = config
+        self._mode_manager = mode_manager
         self._llm_caller = llm_caller
         self._tool_executor = tool_executor
         self._cost_tracker = cost_tracker
@@ -168,7 +183,7 @@ class ReactExecutor(ThinkingMixin, ToolProcessingMixin, SessionPersistenceMixin,
         self._snapshot_manager = None
 
         # Persistent thread pool for parallel tool execution (enables connection reuse)
-        self._parallel_executor = ThreadPoolExecutor(
+        self._parallel_executor = parallel_executor or ThreadPoolExecutor(
             max_workers=MAX_CONCURRENT_TOOLS, thread_name_prefix="tool-worker"
         )
 
@@ -186,7 +201,10 @@ class ReactExecutor(ThinkingMixin, ToolProcessingMixin, SessionPersistenceMixin,
         Returns:
             True if interrupt was requested, False if no task is running
         """
-        from opendev.ui_textual.debug_logger import debug_log
+        try:
+            from opendev.ui_textual.debug_logger import debug_log
+        except ImportError:
+            debug_log = lambda *a, **kw: None  # noqa: E731
 
         debug_log("ReactExecutor", "request_interrupt called")
         debug_log("ReactExecutor", f"_current_task_monitor={self._current_task_monitor}")
@@ -279,9 +297,6 @@ class ReactExecutor(ThinkingMixin, ToolProcessingMixin, SessionPersistenceMixin,
 
         Returns a warning message if a doom loop is detected, None otherwise.
         """
-        if ctx.doom_loop_warned:
-            return None  # User already chose to continue
-
         for tc in tool_calls:
             fp = self._tool_call_fingerprint(tc["function"]["name"], tc["function"]["arguments"])
             ctx.recent_tool_calls.append(fp)
@@ -298,62 +313,6 @@ class ReactExecutor(ThinkingMixin, ToolProcessingMixin, SessionPersistenceMixin,
                     f"{count} times. It may be stuck in a loop."
                 )
         return None
-
-    def _request_doom_loop_approval(
-        self,
-        ctx: IterationContext,
-        warning: str,
-    ) -> bool:
-        """Pause execution and ask the user whether to continue or break.
-
-        Uses the approval manager for genuine blocking pause. Falls back to
-        injecting a warning if no approval manager is available.
-
-        Returns:
-            True if user allows the agent to continue, False to break the loop.
-        """
-        if ctx.ui_callback and hasattr(ctx.ui_callback, "on_message"):
-            ctx.ui_callback.on_message(f"Doom-loop detected: {warning}")
-
-        approval_manager = ctx.approval_manager
-        if approval_manager is None:
-            # No approval manager — fall back to automatic break
-            return False
-
-        from opendev.models.operation import Operation, OperationType
-        from datetime import datetime
-
-        operation = Operation(
-            id=f"doom_loop_{datetime.now().timestamp()}",
-            type=OperationType.BASH_EXECUTE,
-            target="doom_loop_check",
-            parameters={"warning": warning},
-            created_at=datetime.now(),
-        )
-
-        try:
-            import asyncio
-
-            try:
-                asyncio.get_running_loop()
-                # In async context — can't block, auto-break
-                return False
-            except RuntimeError:
-                pass
-
-            result = approval_manager.request_approval(
-                operation=operation,
-                preview=warning,
-                command=f"Agent is repeating: {warning}",
-            )
-            if hasattr(result, "approved"):
-                return bool(result.approved)
-            # If it's a coroutine, run it
-            result = asyncio.run(result)
-            return bool(result.approved)
-        except Exception:
-            logger.debug("Doom loop approval request failed", exc_info=True)
-            return False
 
     def execute(
         self,
@@ -483,7 +442,8 @@ class ReactExecutor(ThinkingMixin, ToolProcessingMixin, SessionPersistenceMixin,
             if isinstance(e, InterruptedError):
                 _debug_log("[INTERRUPT] Caught InterruptedError (via isinstance) in execute()")
             else:
-                self.console.print(f"[red]Error: {str(e)}[/red]")
+                if self.console:
+                    self.console.print(f"[red]Error: {str(e)}[/red]")
                 import traceback
 
                 tb = traceback.format_exc()
@@ -550,13 +510,22 @@ class ReactExecutor(ThinkingMixin, ToolProcessingMixin, SessionPersistenceMixin,
 
         return (self._last_operation_summary, self._last_error, self._last_latency_ms)
 
-    def _build_messages_with_system_prompt(self, messages: list, system_prompt: str) -> list:
+    def _build_messages_with_system_prompt(
+        self, messages: list, system_prompt: str, *, exclude_nudges: bool = False
+    ) -> list:
         """Clone messages and replace the system prompt.
 
         Both thinking and main phases use this to build their message arrays
         from the same compacted base messages.
+
+        Args:
+            messages: Source message list.
+            system_prompt: System prompt to set as first message.
+            exclude_nudges: If True, drop messages tagged with ``_nudge=True``.
         """
         result = list(messages)  # shallow clone
+        if exclude_nudges:
+            result = [m for m in result if not m.get("_nudge")]
         if result and result[0].get("role") == "system":
             result[0] = {"role": "system", "content": system_prompt}
         else:
@@ -672,7 +641,7 @@ class ReactExecutor(ThinkingMixin, ToolProcessingMixin, SessionPersistenceMixin,
 
         if ui_callback and hasattr(ui_callback, "on_assistant_message"):
             ui_callback.on_assistant_message(message)
-        else:
+        elif self.console:
             style = "[dim]" if dim else ""
             end_style = "[/dim]" if dim else ""
             self.console.print(f"\n{style}{message}{end_style}")

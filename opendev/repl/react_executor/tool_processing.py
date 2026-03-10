@@ -62,6 +62,7 @@ class ToolProcessingMixin:
     def _process_tool_calls(self, ctx, tool_calls: list, content: str, raw_content: Optional[str]):
         """Process a list of tool calls."""
         from opendev.core.agents.prompts import get_reminder
+        from opendev.core.agents.prompts.reminders import append_nudge
 
         # Import LoopAction locally to avoid circular imports
         from opendev.repl.react_executor.executor import LoopAction
@@ -69,33 +70,49 @@ class ToolProcessingMixin:
         # Reset no-tool-call counter
         ctx.consecutive_no_tool_calls = 0
 
-        # Doom-loop detection: pause execution and ask user how to proceed
+        # Doom-loop detection: auto-recover with escalating nudges
         doom_warning = self._detect_doom_loop(tool_calls, ctx)
         if doom_warning:
-            _debug_log(f"[DOOM_LOOP] {doom_warning}")
+            ctx.doom_loop_nudge_count += 1
+            _debug_log(
+                f"[DOOM_LOOP] nudge_count={ctx.doom_loop_nudge_count}: {doom_warning}"
+            )
 
-            # Request user approval before continuing — genuine execution pause
-            user_allowed = self._request_doom_loop_approval(ctx, doom_warning)
-
-            if user_allowed:
-                # User chose to continue — mark as warned so we don't ask again
-                ctx.doom_loop_warned = True
-            else:
-                # User chose to break — inject guidance and skip these tool calls
-                ctx.messages.append(
-                    {
-                        "role": "user",
-                        "content": (
-                            f"[SYSTEM WARNING] {doom_warning}\n"
-                            "You appear to be repeating the same action without progress. "
-                            "Please try a completely different approach or explain what "
-                            "you're trying to accomplish so we can find a better path."
-                        ),
-                    }
-                )
-                # Reset the recent tool calls deque to give the agent a fresh start
+            if ctx.doom_loop_nudge_count >= 3:
+                # Third strike — force stop
+                if ctx.ui_callback and hasattr(ctx.ui_callback, "on_message"):
+                    ctx.ui_callback.on_message(
+                        f"Agent stuck in loop after multiple recovery attempts. "
+                        f"Stopping. {doom_warning}"
+                    )
+                ctx.messages.append({
+                    "role": "user",
+                    "content": (
+                        f"[SYSTEM] {doom_warning}\n"
+                        "You have been stuck in a loop despite multiple warnings. "
+                        "STOP and explain what you're trying to do."
+                    ),
+                })
                 ctx.recent_tool_calls.clear()
-                return LoopAction.CONTINUE
+                return LoopAction.BREAK
+
+            if ctx.doom_loop_nudge_count == 2:
+                # Second nudge — notify user silently (no blocking prompt)
+                if ctx.ui_callback and hasattr(ctx.ui_callback, "on_message"):
+                    ctx.ui_callback.on_message(f"Agent may be stuck: {doom_warning}")
+
+            # Inject guidance (first and second nudge)
+            ctx.messages.append({
+                "role": "user",
+                "content": (
+                    f"[SYSTEM WARNING] {doom_warning}\n"
+                    "You appear to be repeating the same action without progress. "
+                    "Please try a completely different approach or explain what "
+                    "you're trying to accomplish so we can find a better path."
+                ),
+            })
+            ctx.recent_tool_calls.clear()
+            return LoopAction.CONTINUE
 
         # Check for task completion FIRST (before displaying content)
         # This prevents duplicate bullets (one for content, one for summary)
@@ -121,7 +138,7 @@ class ToolProcessingMixin:
                             todo_list="\n".join(f"  - {t}" for t in titles),
                         )
                         ctx.messages.append({"role": "assistant", "content": summary})
-                        ctx.messages.append({"role": "user", "content": nudge})
+                        append_nudge(ctx.messages, nudge)
                         return LoopAction.CONTINUE
 
             # Check injection queue before accepting task_complete
@@ -164,23 +181,22 @@ class ToolProcessingMixin:
                     subagent_type = args.get("subagent_type", "")
                     if subagent_type not in EXPLORE_EXEMPT_SUBAGENTS:
                         # Nudge the agent to explore first
-                        ctx.messages.append(
-                            {
-                                "role": "tool",
-                                "tool_call_id": tc["id"],
-                                "content": get_reminder("explore_first_nudge"),
-                            }
+                        append_nudge(
+                            ctx.messages,
+                            get_reminder("explore_first_nudge"),
+                            role="tool",
+                            tool_call_id=tc["id"],
                         )
                         # Fill remaining tool calls with synthetic results
                         for other_tc in tool_calls:
                             if other_tc["id"] != tc["id"]:
-                                ctx.messages.append(
-                                    {
-                                        "role": "tool",
-                                        "tool_call_id": other_tc["id"],
-                                        "content": "Blocked: explore first.",
-                                    }
+                                append_nudge(
+                                    ctx.messages,
+                                    "Blocked: explore first.",
+                                    role="tool",
+                                    tool_call_id=other_tc["id"],
                                 )
+                        ctx.skip_next_thinking = True
                         return LoopAction.CONTINUE
 
         # Mark explored when Code-Explorer is being spawned
@@ -287,12 +303,7 @@ class ToolProcessingMixin:
                 and not todo_handler.has_incomplete_todos()
             ):
                 ctx.all_todos_complete_nudged = True
-                ctx.messages.append(
-                    {
-                        "role": "user",
-                        "content": get_reminder("all_todos_complete_nudge"),
-                    }
-                )
+                append_nudge(ctx.messages, get_reminder("all_todos_complete_nudge"))
 
         # Update context usage indicator after tool results are added
         if self._compactor:
@@ -309,12 +320,7 @@ class ToolProcessingMixin:
             return LoopAction.BREAK
 
         if tool_denied:
-            ctx.messages.append(
-                {
-                    "role": "user",
-                    "content": get_reminder("tool_denied_nudge"),
-                }
-            )
+            append_nudge(ctx.messages, get_reminder("tool_denied_nudge"))
 
         # Persist and Learn
         _debug_log("[TOOLS] Before _persist_step")
@@ -435,7 +441,7 @@ class ToolProcessingMixin:
             result = ctx.tool_registry.execute_tool(
                 tool_name,
                 tool_args,
-                mode_manager=self._tool_executor.mode_manager,
+                mode_manager=self._mode_manager,
                 approval_manager=ctx.approval_manager,
                 undo_manager=ctx.undo_manager,
                 task_monitor=tool_monitor,
@@ -728,8 +734,6 @@ class ToolProcessingMixin:
         ui_callback=None,
     ) -> dict:
         """Execute a single tool call."""
-        from opendev.ui_textual.components.task_progress import TaskProgressDisplay
-
         tool_name = tool_call["function"]["name"]
         tool_args = json.loads(tool_call["function"]["arguments"])
         tool_call_id = tool_call["id"]
@@ -743,14 +747,18 @@ class ToolProcessingMixin:
         if self._tool_executor:
             self._tool_executor._current_task_monitor = tool_monitor
 
-        progress = TaskProgressDisplay(self.console, tool_monitor)
-        progress.start()
+        progress = None
+        if self.console:
+            from opendev.ui_textual.components.task_progress import TaskProgressDisplay
+
+            progress = TaskProgressDisplay(self.console, tool_monitor)
+            progress.start()
 
         try:
             result = tool_registry.execute_tool(
                 tool_name,
                 tool_args,
-                mode_manager=self._tool_executor.mode_manager,
+                mode_manager=self._mode_manager,
                 approval_manager=approval_manager,
                 undo_manager=undo_manager,
                 task_monitor=tool_monitor,
@@ -760,6 +768,7 @@ class ToolProcessingMixin:
             )
             return result
         finally:
-            progress.stop()
+            if progress:
+                progress.stop()
             if self._tool_executor:
                 self._tool_executor._current_task_monitor = None
