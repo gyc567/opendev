@@ -10,11 +10,11 @@ from typing import Any, Dict, Optional
 from rich.text import Text
 
 from opendev.ui_textual.services.display_data import BashOutputData, ToolResultData
-from opendev.ui_textual.utils.tool_display import build_tool_call_text
+from opendev.ui_textual.utils.tool_display import PATH_ARG_KEYS, build_tool_call_text
 
 
-# Path argument keys that should be resolved to absolute paths
-_PATH_ARG_KEYS = {"path", "file_path", "working_dir", "directory", "dir", "target"}
+# Re-export for backward compatibility
+_PATH_ARG_KEYS = PATH_ARG_KEYS
 
 
 class ToolDisplayService:
@@ -96,15 +96,18 @@ class ToolDisplayService:
         # Check for special states
         # Support both dict and dataclass objects (e.g., HttpResult)
         success = (
-            result.get("success", True) if isinstance(result, dict)
+            result.get("success", True)
+            if isinstance(result, dict)
             else getattr(result, "success", True)
         )
         is_interrupted = (
-            result.get("interrupted") if isinstance(result, dict)
+            result.get("interrupted")
+            if isinstance(result, dict)
             else getattr(result, "interrupted", False)
         )
         is_rejected = (
-            result.get("_approved") is False if isinstance(result, dict)
+            result.get("_approved") is False
+            if isinstance(result, dict)
             else getattr(result, "_approved", True) is False
         )
 

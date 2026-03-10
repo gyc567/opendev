@@ -10,6 +10,18 @@ from rich.text import Text
 
 from opendev.ui_textual.style_tokens import GREY
 
+# Canonical set of argument keys that hold file/directory paths.
+# Shared between TUI ToolDisplayService and Web WebSocketToolBroadcaster.
+PATH_ARG_KEYS: set[str] = {
+    "path",
+    "file_path",
+    "working_dir",
+    "directory",
+    "dir",
+    "target",
+    "image_path",
+}
+
 _TOOL_DISPLAY_PARTS: dict[str, tuple[str, str]] = {
     "read_file": ("Read", "file"),
     "read_pdf": ("Read", "pdf"),
@@ -63,7 +75,7 @@ _PRIMARY_ARG_MAP: dict[str, tuple[str, ...]] = {
     "write_file": ("file_path", "path"),
     "edit_file": ("file_path", "path"),
     "list_files": ("path", "directory"),
-    "search": ("query",),
+    "search": ("pattern", "query"),
     "run_command": ("command",),
     "get_process_output": ("pid", "command"),
     "kill_process": ("pid",),
