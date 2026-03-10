@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import type { Message } from '../../types';
 
 interface ToolCallMessageProps {
@@ -9,6 +9,7 @@ interface ToolCallMessageProps {
 function getToolDisplayParts(toolName: string): { verb: string; label: string } {
   const toolMap: Record<string, { verb: string; label: string }> = {
     'read_file': { verb: 'Read', label: 'file' },
+    'read_pdf': { verb: 'Read', label: 'pdf' },
     'write_file': { verb: 'Write', label: 'file' },
     'edit_file': { verb: 'Edit', label: 'file' },
     'delete_file': { verb: 'Delete', label: 'file' },
@@ -16,23 +17,55 @@ function getToolDisplayParts(toolName: string): { verb: string; label: string } 
     'list_directory': { verb: 'List', label: 'directory' },
     'search_code': { verb: 'Search', label: 'code' },
     'search': { verb: 'Search', label: 'project' },
-    'run_command': { verb: 'Run', label: 'command' },
-    'bash_execute': { verb: 'Run', label: 'command' },
+    'run_command': { verb: 'Bash', label: 'command' },
+    'bash_execute': { verb: 'Bash', label: 'command' },
     'fetch_url': { verb: 'Fetch', label: 'url' },
     'open_browser': { verb: 'Open', label: 'browser' },
     'capture_screenshot': { verb: 'Capture', label: 'screenshot' },
+    'capture_web_screenshot': { verb: 'Capture', label: 'page' },
     'analyze_image': { verb: 'Analyze', label: 'image' },
     'git_commit': { verb: 'Commit', label: 'changes' },
     'present_plan': { verb: 'Present', label: 'plan' },
     'spawn_subagent': { verb: 'Spawn', label: 'agent' },
     'task_complete': { verb: 'Complete', label: 'task' },
     'invoke_skill': { verb: 'Invoke', label: 'skill' },
+    'get_process_output': { verb: 'Get Output', label: 'process' },
+    'list_processes': { verb: 'List', label: 'processes' },
+    'kill_process': { verb: 'Kill', label: 'process' },
+    'write_todos': { verb: 'Create', label: 'todos' },
+    'update_todo': { verb: 'Update', label: 'todo' },
+    'complete_todo': { verb: 'Complete', label: 'todo' },
+    'list_todos': { verb: 'List', label: 'todos' },
+    'clear_todos': { verb: 'Clear', label: 'todos' },
+    'find_symbol': { verb: 'Find Symbol', label: 'symbol' },
+    'find_referencing_symbols': { verb: 'Find References', label: 'symbol' },
+    'insert_before_symbol': { verb: 'Insert Before', label: 'symbol' },
+    'insert_after_symbol': { verb: 'Insert After', label: 'symbol' },
+    'replace_symbol_body': { verb: 'Replace Symbol', label: 'symbol' },
+    'rename_symbol': { verb: 'Rename Symbol', label: 'symbol' },
+    'notebook_edit': { verb: 'Edit', label: 'notebook' },
+    'ask_user': { verb: 'Ask', label: 'user' },
+    'web_search': { verb: 'Search', label: 'web' },
+    'get_subagent_output': { verb: 'Get Output', label: 'subagent' },
+    'search_tools': { verb: 'Search Tools', label: 'MCP' },
+    'batch_tool': { verb: 'Batch', label: 'tools' },
+    'apply_patch': { verb: 'Apply', label: 'patch' },
+    'git': { verb: 'Git', label: 'command' },
+    'browser': { verb: 'Browser', label: 'action' },
+    'schedule': { verb: 'Schedule', label: 'task' },
+    'send_message': { verb: 'Send', label: 'message' },
+    'memory_search': { verb: 'Search', label: 'memory' },
+    'memory_write': { verb: 'Write', label: 'memory' },
+    'list_sessions': { verb: 'List', label: 'sessions' },
+    'get_session_history': { verb: 'Get', label: 'session history' },
+    'list_subagents': { verb: 'List', label: 'subagents' },
+    'list_agents': { verb: 'List', label: 'agents' },
   };
 
   if (toolName.startsWith('mcp__')) {
-    const parts = toolName.split('__', 2);
-    if (parts.length === 3) {
-      return { verb: 'MCP', label: `${parts[1]}/${parts[2]}` };
+    const parts = toolName.split('__');
+    if (parts.length >= 3) {
+      return { verb: 'MCP', label: `${parts[1]}/${parts.slice(2).join('__')}` };
     }
     if (parts.length === 2) {
       return { verb: 'MCP', label: parts[1] };
@@ -40,7 +73,14 @@ function getToolDisplayParts(toolName: string): { verb: string; label: string } 
     return { verb: 'MCP', label: 'tool' };
   }
 
-  return toolMap[toolName] || { verb: 'Call', label: 'tool' };
+  if (toolMap[toolName]) return toolMap[toolName];
+
+  // Smart fallback: parse tool_name tokens into verb + label
+  const tokens = toolName.replace(/-/g, '_').split('_').filter(Boolean);
+  if (tokens.length === 0) return { verb: 'Call', label: 'tool' };
+  const verb = tokens[0].charAt(0).toUpperCase() + tokens[0].slice(1);
+  if (tokens.length === 1) return { verb, label: '' };
+  return { verb, label: tokens.slice(1).join(' ') };
 }
 
 function summarizeToolArgs(toolName: string, toolArgs: any): string {
@@ -48,6 +88,7 @@ function summarizeToolArgs(toolName: string, toolArgs: any): string {
 
   const primaryKeys: Record<string, string[]> = {
     'read_file': ['file_path', 'path'],
+    'read_pdf': ['file_path'],
     'write_file': ['file_path', 'path'],
     'edit_file': ['file_path', 'path'],
     'delete_file': ['file_path', 'path'],
@@ -67,6 +108,27 @@ function summarizeToolArgs(toolName: string, toolArgs: any): string {
     'spawn_subagent': ['agent_type', 'description'],
     'task_complete': ['summary'],
     'invoke_skill': ['skill_name'],
+    'get_process_output': ['pid', 'command'],
+    'kill_process': ['pid'],
+    'write_todos': ['todos'],
+    'update_todo': ['id', 'status'],
+    'complete_todo': ['id'],
+    'find_symbol': ['name', 'symbol'],
+    'find_referencing_symbols': ['name', 'symbol'],
+    'replace_symbol_body': ['name', 'symbol'],
+    'rename_symbol': ['name', 'new_name'],
+    'notebook_edit': ['file_path', 'path'],
+    'ask_user': ['question'],
+    'web_search': ['query'],
+    'get_subagent_output': ['agent_id'],
+    'search_tools': ['query'],
+    'batch_tool': ['commands'],
+    'apply_patch': ['patch', 'file_path'],
+    'git': ['command', 'args'],
+    'memory_search': ['query'],
+    'memory_write': ['key', 'content'],
+    'list_sessions': [],
+    'list_subagents': [],
   };
 
   const keys = primaryKeys[toolName] || Object.keys(toolArgs);
@@ -108,6 +170,20 @@ function formatToolResult(toolName: string, toolArgs: any, result: any): string[
     return formatSpawnSubagentResult(toolArgs, result);
   } else if (toolName === 'task_complete') {
     return formatTaskCompleteResult(toolArgs, result);
+  } else if (toolName === 'write_todos') {
+    return formatTodosResult(toolArgs, result);
+  } else if (toolName === 'update_todo' || toolName === 'complete_todo') {
+    return formatTodoUpdateResult(toolName, toolArgs, result);
+  } else if (toolName === 'web_search') {
+    return formatSearchResult(toolArgs, result);
+  } else if (toolName === 'ask_user') {
+    return ['Question answered'];
+  } else if (toolName === 'read_pdf') {
+    return formatReadFileResult(toolArgs, result);
+  } else if (toolName === 'notebook_edit') {
+    return formatEditFileResult(toolArgs, result);
+  } else if (toolName === 'apply_patch') {
+    return formatEditFileResult(toolArgs, result);
   } else {
     return formatGenericResult(toolArgs, result);
   }
@@ -274,6 +350,19 @@ function formatTaskCompleteResult(_toolArgs: any, result: any): string[] {
   return ['Task completed'];
 }
 
+function formatTodosResult(_toolArgs: any, result: any): string[] {
+  const output = result?.output || '';
+  const count = (output.match(/○|▶|✓/g) || []).length;
+  return count > 0 ? [`${count} todo(s) created`] : ['Todos updated'];
+}
+
+function formatTodoUpdateResult(toolName: string, toolArgs: any, _result: any): string[] {
+  const id = toolArgs?.id;
+  const label = id !== undefined ? `todo-${Number(id) + 1}` : 'todo';
+  const action = toolName === 'complete_todo' ? 'Completed' : 'Updated';
+  return [`${action} ${label}`];
+}
+
 function formatGenericResult(_toolArgs: any, result: any): string[] {
   const output = result?.output || '';
 
@@ -298,8 +387,20 @@ function formatGenericResult(_toolArgs: any, result: any): string[] {
   return output ? [String(output)] : [];
 }
 
-export function ToolCallMessage({ message }: ToolCallMessageProps) {
+interface ToolCallMessageExtProps extends ToolCallMessageProps {
+  hasResult?: boolean;
+}
+
+export function ToolCallMessage({ message, hasResult }: ToolCallMessageExtProps) {
   const [isExpanded, setIsExpanded] = useState(false);
+  const expandRef = useRef<HTMLDivElement>(null);
+  const [expandHeight, setExpandHeight] = useState(0);
+
+  useEffect(() => {
+    if (expandRef.current) {
+      setExpandHeight(expandRef.current.scrollHeight);
+    }
+  });
 
   if (message.role === 'tool_call') {
     const toolName = message.tool_name ||
@@ -370,7 +471,9 @@ export function ToolCallMessage({ message }: ToolCallMessageProps) {
     const hasExpandableContent = !!fullOutput && fullOutput.length > 200;
 
     return (
-      <div className="bg-bg-100 border border-border-300/15 rounded-lg px-4 py-3">
+      <div className={`bg-bg-100 border border-border-300/15 rounded-lg px-4 py-3 ${
+        hasResult === false ? 'tool-executing' : hasResult ? 'border-l-3 border-l-success-100/50' : ''
+      }`}>
         {/* Tool action header */}
         <div className="flex items-center gap-2 mb-2">
           <span className="text-text-400 font-mono text-sm leading-6 flex-shrink-0">▶</span>
@@ -420,14 +523,21 @@ export function ToolCallMessage({ message }: ToolCallMessageProps) {
           </button>
         )}
 
-        {/* Expanded content */}
-        {hasExpandableContent && isExpanded && (
-          <div className="ml-4 mt-3 pl-3 border-t border-border-300/15 pt-3">
-            {fullOutput && (
-              <pre className="text-sm text-text-300 font-mono bg-bg-000 border border-border-300/15 rounded p-3 overflow-x-auto max-h-96 leading-6">
-                {fullOutput}
-              </pre>
-            )}
+        {/* Expanded content — always rendered, animated via maxHeight */}
+        {hasExpandableContent && (
+          <div
+            className="overflow-hidden transition-all duration-300 ease-in-out"
+            style={{
+              maxHeight: isExpanded ? `${expandHeight}px` : '0px',
+            }}
+          >
+            <div ref={expandRef} className="ml-4 mt-3 pl-3 border-t border-border-300/15 pt-3">
+              {fullOutput && (
+                <pre className="text-sm text-text-300 font-mono bg-bg-000 border border-border-300/15 rounded p-3 overflow-x-auto leading-6">
+                  {fullOutput}
+                </pre>
+              )}
+            </div>
           </div>
         )}
       </div>
