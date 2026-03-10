@@ -91,8 +91,8 @@ def test_accepts_well_structured_plan():
         "4. Add unit tests for the new OAuth2 flow\n"
         "5. Update documentation\n\n"
         "## Verification\n"
-        "- Unit tests pass\n"
-        "- OAuth2 login works end-to-end\n\n"
+        "- `uv run pytest tests/test_oauth2.py` — unit tests pass\n"
+        "- OAuth2 login works end-to-end in the CLI\n\n"
         "---END PLAN---\n"
     )
 
@@ -104,6 +104,31 @@ def test_accepts_well_structured_plan():
 
     assert result["success"] is True
     assert result.get("plan_approved") is True
+
+
+def test_rejects_plan_with_insufficient_verification():
+    """Plan with fewer than 2 verification items should be rejected."""
+    tool = PresentPlanTool()
+    plan_weak_verification = (
+        "---BEGIN PLAN---\n\n"
+        "## Goal\n"
+        "Refactor the authentication module to support OAuth2.\n\n"
+        "## Implementation Steps\n"
+        "1. Add OAuth2 provider configuration\n"
+        "2. Implement token exchange flow\n"
+        "3. Update session management to handle OAuth tokens\n\n"
+        "## Verification\n"
+        "- Run tests\n\n"
+        "---END PLAN---\n"
+    )
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False) as f:
+        f.write(plan_weak_verification)
+        f.flush()
+        result = tool.execute(plan_file_path=f.name)
+
+    assert result["success"] is False
+    assert "verification" in result["error"].lower()
 
 
 def test_rejects_missing_file():

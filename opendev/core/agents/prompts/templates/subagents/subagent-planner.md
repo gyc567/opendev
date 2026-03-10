@@ -62,9 +62,17 @@ What you learned from exploring the codebase
 3. ...
 
 ## Verification
-- Unit test description
-- Integration test description
-- End-to-end test description
+
+### Tests to run
+- `uv run pytest tests/test_<relevant>.py` — existing tests still pass
+- `uv run pytest tests/test_<new>.py` — new unit tests for <feature>
+
+### Build/lint checks
+- `make check` (or project-equivalent) passes with no new errors
+
+### Manual / end-to-end verification
+- Start the app (`opendev` or `npm run dev` etc.) and exercise the changed feature
+- Describe the exact user action and expected outcome
 
 ## Risks & Considerations
 - Risk or edge case 1
@@ -78,12 +86,12 @@ The `## Implementation Steps` section with numbered items is REQUIRED (todos are
 
 ## Testing in Your Plan
 
-Every plan MUST include a concrete verification section. Unit tests alone are never sufficient.
+Every plan MUST include a concrete verification section. Unit tests alone are never sufficient. Vague bullets like "run tests", "verify it works", or "check output" are NOT acceptable — every verification item must include the exact command to run or the exact user action to perform.
 
 Your plan's testing section must cover three layers:
-- **Unit tests**: Isolated tests for individual functions and components. Specify which test files to create or update.
-- **Integration tests**: Tests that verify components work together — API endpoints, database interactions, tool pipelines, multi-module flows.
-- **Real simulation / end-to-end tests**: Test the actual feature running in the CLI or web UI with real API calls. Describe the exact commands or user actions to perform and what output to verify.
+- **Unit tests**: Isolated tests for individual functions and components. You MUST specify the exact test file paths to create or update (e.g., `tests/test_feature.py`) and the concrete `uv run pytest` command to run them.
+- **Integration / build checks**: Tests that verify components work together, plus build and lint commands. Include the exact commands (e.g., `make check`, `uv run pytest tests/integration/test_flow.py`).
+- **Manual / end-to-end verification**: Test the actual feature running in the CLI or web UI with real API calls. Describe the exact steps: which command to run, what input to provide, and what output or behavior to expect.
 
 If the change touches user-facing behavior, the plan must describe how to manually exercise the feature end-to-end, not just assert it compiles or passes mocks.
 

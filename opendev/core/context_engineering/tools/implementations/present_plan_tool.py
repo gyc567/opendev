@@ -103,6 +103,17 @@ class PresentPlanTool:
                 f"a properly structured plan to {plan_file_path}.",
             }
 
+        if not parsed.verification or len(parsed.verification) < 2:
+            return {
+                "success": False,
+                "error": "Plan verification section is missing or too brief.",
+                "output": "Plan needs a more detailed '## Verification' section with "
+                "concrete test commands, build/lint checks, and manual verification "
+                "steps. "
+                "Re-spawn the Planner subagent to improve the verification section "
+                f"in {plan_file_path}.",
+            }
+
         # Store plan_file_path in session metadata
         if session_manager:
             try:

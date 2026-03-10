@@ -34,11 +34,13 @@ class ParsedPlan:
         for step in self.steps:
             # Generate activeForm from step (convert to present continuous)
             active_form = self._generate_active_form(step)
-            todos.append({
-                "content": step,
-                "status": "pending",
-                "activeForm": active_form,
-            })
+            todos.append(
+                {
+                    "content": step,
+                    "status": "pending",
+                    "activeForm": active_form,
+                }
+            )
         return todos
 
     @staticmethod
@@ -129,9 +131,7 @@ def parse_plan(text: str) -> Optional[ParsedPlan]:
         plan.context = context_match.group(1).strip()
 
     # Parse Files to Modify section
-    files_match = re.search(
-        r"##\s*Files to Modify\s*\n(.*?)(?=\n##|\Z)", plan_content, re.DOTALL
-    )
+    files_match = re.search(r"##\s*Files to Modify\s*\n(.*?)(?=\n##|\Z)", plan_content, re.DOTALL)
     if files_match:
         plan.files_to_modify = _parse_bullet_list(files_match.group(1))
 
@@ -154,7 +154,7 @@ def parse_plan(text: str) -> Optional[ParsedPlan]:
         r"##\s*Verification\s*\n(.*?)(?=\n##|\Z)", plan_content, re.DOTALL
     )
     if verification_match:
-        plan.verification = _parse_checkbox_list(verification_match.group(1))
+        plan.verification = _parse_bullet_list(verification_match.group(1))
 
     # Parse Risks & Considerations section
     risks_match = re.search(
