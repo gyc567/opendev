@@ -344,6 +344,21 @@ class ToolRegistry:
             context,
         )
 
+        # Detect shallow subagent completions (≤1 tool call).
+        # Spawning a subagent has overhead (extra LLM call + context setup), so if it
+        # only made 1 tool call, the parent agent could have done it directly. Inject
+        # feedback via _llm_suffix so the LLM learns to avoid trivial spawns.
+        subagent_tool_calls = self._count_subagent_tool_calls(result)
+        shallow_suffix = ""
+        if subagent_tool_calls <= 1 and result.get("success"):
+            shallow_suffix = (
+                "\n\n[SHALLOW SUBAGENT WARNING] This subagent only made "
+                f"{subagent_tool_calls} tool call(s). Spawning a subagent for a task "
+                "that requires ≤1 tool call is wasteful — you should have used a "
+                "direct tool call instead. For future similar tasks, use read_file, "
+                "search, or list_files directly rather than spawning a subagent."
+            )
+
         # Format output for consistency
         if result.get("success"):
             content = result.get("content", "")
@@ -357,6 +372,8 @@ class ToolRegistry:
                 "subagent_type": subagent_type,
                 "completion_status": completion_status,  # Always include for sync completions
             }
+            if shallow_suffix:
+                response["_llm_suffix"] = shallow_suffix
             return response
         else:
             # Check both "error" and "content" fields for error message
@@ -368,6 +385,22 @@ class ToolRegistry:
                 "output": None,
                 "interrupted": result.get("interrupted", False),  # Propagate interrupt flag
             }
+
+    @staticmethod
+    def _count_subagent_tool_calls(result: dict[str, Any]) -> int:
+        """Count actual tool calls made by a subagent from its message history.
+
+        Counts assistant messages that contain tool_calls, which represents
+        the number of LLM turns where tools were invoked. This is more
+        accurate than counting tool result messages since one turn can
+        invoke multiple parallel tools.
+        """
+        messages = result.get("messages", [])
+        return sum(
+            1
+            for msg in messages
+            if msg.get("role") == "assistant" and msg.get("tool_calls")
+        )
 
     def _save_subagent_session(
         self,

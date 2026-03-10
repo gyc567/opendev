@@ -53,13 +53,17 @@ Subagents are specialized agents with focused capabilities. Each has a specific 
 - Independent research tasks exploring different parts of the codebase
 - Tasks that can be divided into non-overlapping areas of investigation
 
-**When NOT to use subagents**:
+**When NOT to use subagents** (use direct tools instead — spawning has LLM overhead):
+- Analyzing or reading a file whose path you already know — use `read_file` directly
+- Simple grep/search for a specific pattern — use `search` directly
+- Reading output you just produced (logs, test results, command output) — use `read_file` directly
 - Single file edits or quick checks
-- Simple grep/search operations
-- Reading a single file
 - Running a single command
+- Any task achievable in 1-2 tool calls — subagent overhead is never justified for these
 - Creative or greenfield tasks with no existing codebase (game design, brainstorming, writing specs from scratch) — handle directly
 - When the task doesn't match any subagent's purpose — don't force-fit
+
+**Anti-pattern**: Do NOT spawn Code-Explorer to read/analyze a file whose path you already know. That wastes an entire LLM call on subagent setup when a direct `read_file` gives the same result instantly.
 
 **IMPORTANT**: Subagent results aren't visible to the user — you must always present their findings in your response.
 

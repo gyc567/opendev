@@ -39,7 +39,8 @@ When choosing tools, prefer the more specific option:
 **Rule of thumb**:
 - **Known target** (specific file, function, pattern) → **Direct tools** (1-3 tool calls)
 - **Exploration needed** (understand how, find strategy, design approach) → **Subagent** (5+ tool calls or multiple files)
-- **Single file** → **Direct**
+- **Single file** → **Direct** (never spawn a subagent for one file)
 - **Multiple files or deep analysis** → **Subagent**
+- **You already have the file path** → **Direct** (read it yourself, don't delegate)
 - **Parallel subagents**: When the user requests multiple agents or the task has independent parts, make multiple spawn_subagent calls in a single response. They execute concurrently.
 - **Parallel read-only tools**: When you need to read multiple files, search for multiple patterns, or fetch multiple URLs, make all the calls in a single response. Independent read-only tools (read_file, list_files, search, fetch_url, web_search) execute concurrently when batched together.
