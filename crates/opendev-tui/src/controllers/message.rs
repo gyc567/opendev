@@ -9,7 +9,7 @@ use opendev_models::message::{ChatMessage, Role};
 use crate::app::{AppState, DisplayMessage, DisplayRole, DisplayToolCall};
 // format_tool_call_display is available for future slash-command / display enhancements.
 #[allow(unused_imports)]
-use crate::formatters::tool_colors::format_tool_call_display;
+use crate::formatters::tool_registry::format_tool_call_display;
 
 /// Controller responsible for managing conversation message flow.
 pub struct MessageController;

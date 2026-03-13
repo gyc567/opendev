@@ -5,6 +5,7 @@ use super::bash_formatter::BashFormatter;
 use super::directory_formatter::DirectoryFormatter;
 use super::file_formatter::FileFormatter;
 use super::generic_formatter::GenericFormatter;
+use super::tool_registry::{ResultFormat, lookup_tool};
 
 /// Factory that selects the right formatter for a given tool name.
 pub struct FormatterFactory;
@@ -18,12 +19,11 @@ impl FormatterFactory {
 
     /// Return the formatter that handles a given tool name.
     fn formatter_for(tool_name: &str) -> Box<dyn ToolFormatter> {
-        match tool_name {
-            "Bash" | "run_command" | "bash_execute" => Box::new(BashFormatter),
-            "Read" | "Write" | "Edit" | "read_file" | "write_file" | "edit_file" | "read_pdf"
-            | "patch_file" => Box::new(FileFormatter),
-            "Glob" | "Grep" | "list_files" | "search" => Box::new(DirectoryFormatter),
-            _ => Box::new(GenericFormatter),
+        match lookup_tool(tool_name).result_format {
+            ResultFormat::Bash => Box::new(BashFormatter),
+            ResultFormat::File => Box::new(FileFormatter),
+            ResultFormat::Directory => Box::new(DirectoryFormatter),
+            ResultFormat::Generic => Box::new(GenericFormatter),
         }
     }
 }

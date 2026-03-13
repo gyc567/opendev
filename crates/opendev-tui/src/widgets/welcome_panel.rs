@@ -7,12 +7,7 @@
 //! - Cohesive blue-themed gradient text and border
 //! - Fade-out animation on first message submission
 
-use ratatui::{
-    buffer::Buffer,
-    layout::Rect,
-    style::Color,
-    widgets::Widget,
-};
+use ratatui::{buffer::Buffer, layout::Rect, style::Color, widgets::Widget};
 
 use crate::formatters::style_tokens;
 use crate::widgets::spinner::SPINNER_FRAMES;
@@ -47,7 +42,9 @@ fn hsl_to_rgb(hue: f64, saturation: f64, lightness: f64) -> Color {
 // ---------------------------------------------------------------------------
 
 fn pseudo_rand(seed: &mut u64) -> f32 {
-    *seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1_442_695_040_888_963_407);
+    *seed = seed
+        .wrapping_mul(6_364_136_223_846_793_005)
+        .wrapping_add(1_442_695_040_888_963_407);
     (*seed >> 33) as f32 / (1u64 << 31) as f32
 }
 
@@ -269,24 +266,73 @@ impl<'a> WelcomePanelWidget<'a> {
         };
 
         // Top: ╭───╮
-        Self::put(buf, area, bx, by, style_tokens::BOX_TL.chars().next().unwrap(), border_color(0));
+        Self::put(
+            buf,
+            area,
+            bx,
+            by,
+            style_tokens::BOX_TL.chars().next().unwrap(),
+            border_color(0),
+        );
         for i in 1..bw - 1 {
-            Self::put(buf, area, bx + i, by, style_tokens::BOX_H.chars().next().unwrap(), border_color(i));
+            Self::put(
+                buf,
+                area,
+                bx + i,
+                by,
+                style_tokens::BOX_H.chars().next().unwrap(),
+                border_color(i),
+            );
         }
-        Self::put(buf, area, bx + bw - 1, by, style_tokens::BOX_TR.chars().next().unwrap(), border_color(bw));
+        Self::put(
+            buf,
+            area,
+            bx + bw - 1,
+            by,
+            style_tokens::BOX_TR.chars().next().unwrap(),
+            border_color(bw),
+        );
 
         // Bottom: ╰───╯
-        Self::put(buf, area, bx, by + bh - 1, style_tokens::BOX_BL.chars().next().unwrap(), border_color(bw + bh));
+        Self::put(
+            buf,
+            area,
+            bx,
+            by + bh - 1,
+            style_tokens::BOX_BL.chars().next().unwrap(),
+            border_color(bw + bh),
+        );
         for i in 1..bw - 1 {
-            Self::put(buf, area, bx + i, by + bh - 1, style_tokens::BOX_H.chars().next().unwrap(), border_color(bw + bh + i));
+            Self::put(
+                buf,
+                area,
+                bx + i,
+                by + bh - 1,
+                style_tokens::BOX_H.chars().next().unwrap(),
+                border_color(bw + bh + i),
+            );
         }
-        Self::put(buf, area, bx + bw - 1, by + bh - 1, style_tokens::BOX_BR.chars().next().unwrap(), border_color(2 * bw + bh));
+        Self::put(
+            buf,
+            area,
+            bx + bw - 1,
+            by + bh - 1,
+            style_tokens::BOX_BR.chars().next().unwrap(),
+            border_color(2 * bw + bh),
+        );
 
         // Sides: │
         let v = style_tokens::BOX_V.chars().next().unwrap();
         for j in 1..bh - 1 {
             Self::put(buf, area, bx, by + j, v, border_color(bw + j));
-            Self::put(buf, area, bx + bw - 1, by + j, v, border_color(2 * bw + bh + j));
+            Self::put(
+                buf,
+                area,
+                bx + bw - 1,
+                by + j,
+                v,
+                border_color(2 * bw + bh + j),
+            );
         }
     }
 
@@ -360,10 +406,7 @@ impl<'a> WelcomePanelWidget<'a> {
                 }
 
                 // Compact logo fallback (single line)
-                if show_compact
-                    && row == cl_row
-                    && col_idx >= cl_start_col
-                    && col_idx < cl_end_col
+                if show_compact && row == cl_row && col_idx >= cl_start_col && col_idx < cl_end_col
                 {
                     let ch_idx = col_idx - cl_start_col;
                     let ch = compact_logo.as_bytes()[ch_idx] as char;
@@ -388,10 +431,9 @@ impl<'a> WelcomePanelWidget<'a> {
                         Self::put(buf, area, rx + col_idx as u16, ry + row as u16, '░', color);
                     } else {
                         let lightness = 0.45 * (1.0 - t) + 0.10 * t;
-                        let frame_idx = (rain_col.char_offset as usize
-                            + row
-                            + self.state.braille_offset)
-                            % SPINNER_FRAMES.len();
+                        let frame_idx =
+                            (rain_col.char_offset as usize + row + self.state.braille_offset)
+                                % SPINNER_FRAMES.len();
                         let ch = SPINNER_FRAMES[frame_idx];
                         let color = hsl_to_rgb(col_hue, 0.8 * fade, lightness * fade);
                         Self::put(buf, area, rx + col_idx as u16, ry + row as u16, ch, color);
@@ -413,7 +455,8 @@ impl Widget for WelcomePanelWidget<'_> {
             "\u{2550}\u{2550}\u{2550}  O P E N D E V  v{}  \u{2550}\u{2550}\u{2550}",
             self.version
         );
-        let line3 = "/help  \u{2502}  /models  \u{2502}  Shift+Tab plan mode  \u{2502}  @file context";
+        let line3 =
+            "/help  \u{2502}  /models  \u{2502}  Shift+Tab plan mode  \u{2502}  @file context";
 
         // 3-tier responsive layout
         if area.height < 5 {
@@ -570,7 +613,11 @@ mod tests {
         state.step_rain();
         for (i, col) in state.rain_columns.iter().enumerate() {
             // Either advanced or reset (if it went off-screen)
-            assert!(col.y != initial_ys[i] || col.speed == 0.0 || initial_ys[i] > 10.0 + col.trail_len as f32);
+            assert!(
+                col.y != initial_ys[i]
+                    || col.speed == 0.0
+                    || initial_ys[i] > 10.0 + col.trail_len as f32
+            );
         }
     }
 
@@ -579,7 +626,9 @@ mod tests {
         use ratatui::{buffer::Buffer, layout::Rect, widgets::Widget};
 
         let state = WelcomePanelState::new();
-        let widget = WelcomePanelWidget::new(&state).version("0.1.0").mode("NORMAL");
+        let widget = WelcomePanelWidget::new(&state)
+            .version("0.1.0")
+            .mode("NORMAL");
 
         // Simulate a typical conversation area: 100 wide, 20 tall
         let area = Rect::new(0, 0, 100, 20);
@@ -608,7 +657,9 @@ mod tests {
         use ratatui::{buffer::Buffer, layout::Rect, widgets::Widget};
 
         let state = WelcomePanelState::new();
-        let widget = WelcomePanelWidget::new(&state).version("0.1.0").mode("NORMAL");
+        let widget = WelcomePanelWidget::new(&state)
+            .version("0.1.0")
+            .mode("NORMAL");
 
         // Tier 1: very small (height < 5)
         let area = Rect::new(0, 0, 80, 4);
@@ -619,7 +670,10 @@ mod tests {
             .flat_map(|y| (0..area.width).map(move |x| (x, y)))
             .filter(|&(x, y)| buf.cell((x, y)).unwrap().symbol() != " ")
             .count();
-        assert!(modified > 5, "Tier 1 should render gradient text, got {modified} cells");
+        assert!(
+            modified > 5,
+            "Tier 1 should render gradient text, got {modified} cells"
+        );
     }
 
     #[test]
@@ -636,7 +690,9 @@ mod tests {
         use ratatui::{buffer::Buffer, layout::Rect, widgets::Widget};
 
         let state = WelcomePanelState::new();
-        let widget = WelcomePanelWidget::new(&state).version("0.1.0").mode("NORMAL");
+        let widget = WelcomePanelWidget::new(&state)
+            .version("0.1.0")
+            .mode("NORMAL");
 
         let area = Rect::new(0, 0, 100, 20);
         let mut buf = Buffer::empty(area);
@@ -674,7 +730,9 @@ mod tests {
         for _ in 0..5 {
             state.tick(100, 20);
         }
-        let widget = WelcomePanelWidget::new(&state).version("0.1.0").mode("NORMAL");
+        let widget = WelcomePanelWidget::new(&state)
+            .version("0.1.0")
+            .mode("NORMAL");
 
         let area = Rect::new(0, 0, 100, 20);
         let mut buf = Buffer::empty(area);

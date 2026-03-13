@@ -468,13 +468,7 @@ pub fn create_thinking_composer(templates_dir: impl AsRef<Path>) -> PromptCompos
     let mut composer = PromptComposer::new(templates_dir.as_ref());
 
     // Core thinking identity - MUST be first (matches Python's core_prompt loading)
-    composer.register_section(
-        "thinking_core",
-        "system/thinking.md",
-        None,
-        10,
-        true,
-    );
+    composer.register_section("thinking_core", "system/thinking.md", None, 10, true);
 
     composer.register_section(
         "available_tools",

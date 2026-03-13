@@ -14,7 +14,7 @@ use ratatui::{
 
 use crate::app::ToolExecution;
 use crate::formatters::style_tokens;
-use crate::formatters::tool_colors::{categorize_tool, tool_color};
+use crate::formatters::tool_registry::{categorize_tool, tool_color};
 use crate::widgets::spinner::{COMPLETED_CHAR, SPINNER_FRAMES};
 
 /// Widget that displays active tool executions.
@@ -134,6 +134,7 @@ mod tests {
             tick_count: 0,
             parent_id: None,
             depth: 0,
+            args: Default::default(),
         }];
         let _widget = ToolDisplayWidget::new(&tools);
     }
@@ -152,6 +153,7 @@ mod tests {
                 tick_count: 0,
                 parent_id: None,
                 depth: 0,
+                args: Default::default(),
             },
             ToolExecution {
                 id: "t2".into(),
@@ -164,6 +166,7 @@ mod tests {
                 tick_count: 0,
                 parent_id: Some("t1".into()),
                 depth: 1,
+                args: Default::default(),
             },
         ];
         let _widget = ToolDisplayWidget::new(&tools);

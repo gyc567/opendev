@@ -9,7 +9,7 @@ pub mod file_formatter;
 pub mod generic_formatter;
 pub mod markdown;
 pub mod style_tokens;
-pub mod tool_colors;
+pub mod tool_registry;
 
 pub use base::{FormattedOutput, ToolFormatter};
 pub use display::{
@@ -17,7 +17,7 @@ pub use display::{
 };
 pub use factory::FormatterFactory;
 pub use markdown::MarkdownRenderer;
-pub use tool_colors::{
+pub use tool_registry::{
     GREEN_GRADIENT, ToolCategory, categorize_tool, format_tool_call_display, tool_color,
     tool_display_parts,
 };

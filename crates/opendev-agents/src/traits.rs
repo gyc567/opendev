@@ -196,7 +196,12 @@ pub trait TaskMonitor: Send + Sync {
 /// Callback for streaming agent events to the UI during the ReAct loop.
 pub trait AgentEventCallback: Send + Sync {
     /// A tool execution started.
-    fn on_tool_started(&self, tool_id: &str, tool_name: &str);
+    fn on_tool_started(
+        &self,
+        tool_id: &str,
+        tool_name: &str,
+        args: &std::collections::HashMap<String, serde_json::Value>,
+    );
     /// A tool execution completed.
     fn on_tool_finished(&self, tool_id: &str, success: bool);
     /// Streaming text chunk from the assistant.

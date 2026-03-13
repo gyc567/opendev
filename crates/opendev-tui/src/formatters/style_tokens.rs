@@ -64,6 +64,6 @@ pub struct Indent;
 impl Indent {
     /// 2-space continuation for wrapped lines under a message (matches icon+space width)
     pub const CONT: &str = "  ";
-    /// Tool result continuation lines (3 spaces to match "⎿  " visual width)
-    pub const RESULT_CONT: &str = "   ";
+    /// Tool result continuation lines (5 spaces to match "  ⎿  " visual width)
+    pub const RESULT_CONT: &str = "     ";
 }

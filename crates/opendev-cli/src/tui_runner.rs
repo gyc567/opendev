@@ -22,10 +22,16 @@ struct TuiEventCallback {
 }
 
 impl AgentEventCallback for TuiEventCallback {
-    fn on_tool_started(&self, tool_id: &str, tool_name: &str) {
+    fn on_tool_started(
+        &self,
+        tool_id: &str,
+        tool_name: &str,
+        args: &std::collections::HashMap<String, serde_json::Value>,
+    ) {
         let _ = self.tx.send(AppEvent::ToolStarted {
             tool_id: tool_id.to_string(),
             tool_name: tool_name.to_string(),
+            args: args.clone(),
         });
     }
 
@@ -37,11 +43,13 @@ impl AgentEventCallback for TuiEventCallback {
     }
 
     fn on_tool_result(&self, tool_id: &str, tool_name: &str, output: &str, success: bool) {
+        // Args will be looked up from the stored ToolExecution in app.rs
         let _ = self.tx.send(AppEvent::ToolResult {
             tool_id: tool_id.to_string(),
             tool_name: tool_name.to_string(),
             output: output.to_string(),
             success,
+            args: std::collections::HashMap::new(),
         });
     }
 

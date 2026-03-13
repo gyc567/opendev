@@ -391,7 +391,11 @@ impl AgentRuntime {
         let thinking_sys_prompt = {
             let composer = create_thinking_composer("/dev/null");
             let prompt = composer.compose(&HashMap::new());
-            if prompt.is_empty() { None } else { Some(prompt) }
+            if prompt.is_empty() {
+                None
+            } else {
+                Some(prompt)
+            }
         };
         self.react_loop
             .set_thinking_context(Some(query.to_string()), thinking_sys_prompt);

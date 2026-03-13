@@ -16,7 +16,7 @@ use crate::app::{DisplayMessage, DisplayRole, DisplayToolCall, ToolExecution};
 use crate::formatters::display::strip_system_reminders;
 use crate::formatters::markdown::MarkdownRenderer;
 use crate::formatters::style_tokens::{self, Indent};
-use crate::formatters::tool_colors::{categorize_tool, format_tool_call_display, tool_color};
+use crate::formatters::tool_registry::{categorize_tool, format_tool_call_display, tool_color};
 use crate::widgets::progress::TaskProgress;
 use crate::widgets::spinner::{COMPLETED_CHAR, CONTINUATION_CHAR, SPINNER_FRAMES};
 
@@ -229,7 +229,7 @@ impl<'a> ConversationWidget<'a> {
                 if !tc.collapsed && !tc.result_lines.is_empty() {
                     for (i, result_line) in tc.result_lines.iter().enumerate() {
                         let prefix_char = if i == 0 {
-                            format!("{}  ", CONTINUATION_CHAR)
+                            format!("  {}  ", CONTINUATION_CHAR)
                         } else {
                             Indent::RESULT_CONT.to_string()
                         };
@@ -246,7 +246,7 @@ impl<'a> ConversationWidget<'a> {
                     let count = tc.result_lines.len();
                     lines.push(Line::from(Span::styled(
                         format!(
-                            "{}  ({count} lines collapsed, press Ctrl+O to expand)",
+                            "  {}  ({count} lines collapsed, press Ctrl+O to expand)",
                             CONTINUATION_CHAR
                         ),
                         Style::default()
@@ -267,11 +267,7 @@ impl<'a> ConversationWidget<'a> {
         }
 
         // Inline spinner lines at the bottom of the conversation
-        let active_unfinished: Vec<_> = self
-            .active_tools
-            .iter()
-            .filter(|t| !t.finished)
-            .collect();
+        let active_unfinished: Vec<_> = self.active_tools.iter().filter(|t| !t.finished).collect();
 
         if !active_unfinished.is_empty() {
             for tool in &active_unfinished {
@@ -312,8 +308,8 @@ impl<'a> ConversationWidget<'a> {
             ]));
         }
 
-        // Bottom padding — breathing room before the input separator
-        lines.push(Line::from(""));
+        // Bottom padding — 1 line of breathing room (the render method reserves
+        // an additional row, so the total visual gap is 2 rows).
         lines.push(Line::from(""));
 
         lines
@@ -368,22 +364,38 @@ fn format_nested_tool_call(tc: &DisplayToolCall, depth: usize) -> Line<'static> 
 
 impl Widget for ConversationWidget<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
+        if area.height < 2 {
+            return;
+        }
+
+        // Reserve 1 row at the bottom as a guaranteed gap before the input separator.
+        // The content also has 2 blank padding lines, but word-wrapping estimation
+        // (div_ceil) can undercount rows vs. ratatui's actual WordWrapper, causing
+        // the padding to be clipped at certain terminal sizes.  This reserved row
+        // ensures at least 1 row of breathing room regardless of scroll accuracy.
+        let content_area = Rect {
+            height: area.height - 1,
+            ..area
+        };
+
         let lines = self.build_lines();
 
-        // Compute total wrapped line count
-        let total_lines: usize = lines.iter().map(|line| {
-            let w = line.width();
-            if w == 0 || area.width == 0 {
-                1
-            } else {
-                w.div_ceil(area.width as usize)
-            }
-        }).sum();
-        let viewport_height = area.height as usize;
+        // Compute total wrapped line count (character-level estimate)
+        let total_lines: usize = lines
+            .iter()
+            .map(|line| {
+                let w = line.width();
+                if w == 0 || content_area.width == 0 {
+                    1
+                } else {
+                    w.div_ceil(content_area.width as usize)
+                }
+            })
+            .sum();
+        let viewport_height = content_area.height as usize;
         let max_scroll = total_lines.saturating_sub(viewport_height);
 
-        let paragraph = Paragraph::new(lines)
-            .wrap(Wrap { trim: false });
+        let paragraph = Paragraph::new(lines).wrap(Wrap { trim: false });
 
         // scroll_offset = lines from bottom; convert to lines from top for ratatui
         let clamped = (self.scroll_offset as usize).min(max_scroll);
@@ -391,7 +403,7 @@ impl Widget for ConversationWidget<'_> {
 
         paragraph
             .scroll((actual_scroll as u16, 0))
-            .render(area, buf);
+            .render(content_area, buf);
 
         // Scroll position indicator when scrolled up
         if self.scroll_offset > 0 && max_scroll > 0 {
@@ -518,6 +530,7 @@ mod tests {
             tick_count: 0,
             parent_id: None,
             depth: 0,
+            args: Default::default(),
         }];
         let widget = ConversationWidget::new(&msgs, 0).active_tools(&tools);
         let lines = widget.build_lines();
@@ -573,6 +586,7 @@ mod tests {
             tick_count: 2,
             parent_id: None,
             depth: 0,
+            args: Default::default(),
         }];
         let progress = TaskProgress {
             description: "Thinking".to_string(),
@@ -604,8 +618,8 @@ mod tests {
         }];
         let widget = ConversationWidget::new(&msgs, 0);
         let lines = widget.build_lines();
-        // Message line + blank line + 2 bottom padding lines, no spinner
-        assert_eq!(lines.len(), 4);
+        // Message line + blank line + 1 bottom padding line, no spinner
+        assert_eq!(lines.len(), 3);
     }
 
     #[test]
@@ -641,5 +655,32 @@ mod tests {
         // Tool calls now use format_tool_call_display: Spawn(subagent), Read(file)
         assert!(text.contains("Spawn"));
         assert!(text.contains("Read"));
+    }
+
+    #[test]
+    fn test_render_reserves_bottom_row_gap() {
+        use ratatui::buffer::Buffer;
+
+        let msgs = vec![DisplayMessage {
+            role: DisplayRole::User,
+            content: "Hello".into(),
+            tool_call: None,
+        }];
+        let widget = ConversationWidget::new(&msgs, 0);
+
+        // Render into a small area
+        let area = Rect::new(0, 0, 40, 10);
+        let mut buf = Buffer::empty(area);
+        widget.render(area, &mut buf);
+
+        // The last row (y=9) must be entirely blank — reserved gap
+        for x in 0..40 {
+            let cell = &buf[(x, 9)];
+            assert_eq!(
+                cell.symbol(),
+                " ",
+                "Bottom gap row should be blank at column {x}"
+            );
+        }
     }
 }

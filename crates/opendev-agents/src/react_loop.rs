@@ -717,7 +717,7 @@ impl ReactLoop {
                             tc.get("id").and_then(|id| id.as_str()).unwrap_or("unknown");
 
                         if let Some(cb) = event_callback {
-                            cb.on_tool_started(tool_call_id_str, tool_name);
+                            cb.on_tool_started(tool_call_id_str, tool_name, &args_map);
                         }
 
                         let tool_result = tool_registry

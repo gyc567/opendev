@@ -15,13 +15,11 @@ use crate::widgets::{
 };
 use crossterm::{
     event::{
-        KeyCode, KeyModifiers,
-        KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+        KeyCode, KeyModifiers, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags,
+        PushKeyboardEnhancementFlags,
     },
     execute,
-    terminal::{
-        EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
-    },
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use ratatui::{Terminal, backend::CrosstermBackend, layout};
 use tokio::sync::mpsc;
@@ -130,6 +128,8 @@ pub struct AppState {
     pub terminal_width: u16,
     /// Cached terminal height for tick-time access.
     pub terminal_height: u16,
+    /// Queued messages submitted while agent was processing.
+    pub pending_messages: Vec<String>,
 }
 
 /// A message prepared for display in the conversation widget.
@@ -182,6 +182,8 @@ pub struct ToolExecution {
     pub parent_id: Option<String>,
     /// Nesting depth (0 = top-level).
     pub depth: usize,
+    /// Tool arguments for display.
+    pub args: std::collections::HashMap<String, serde_json::Value>,
 }
 
 impl Default for AppState {
@@ -221,6 +223,7 @@ impl Default for AppState {
             welcome_panel: WelcomePanelState::new(),
             terminal_width: 80,
             terminal_height: 24,
+            pending_messages: Vec::new(),
         }
     }
 }
@@ -291,6 +294,13 @@ impl App {
         let mut stdout = io::stdout();
         execute!(stdout, EnterAlternateScreen)?;
 
+        // Enable xterm alternate scroll mode: terminal converts mouse wheel events
+        // into Up/Down arrow key sequences. This gives us scroll support without
+        // EnableMouseCapture, preserving native text selection.
+        use std::io::Write;
+        stdout.write_all(b"\x1b[?1007h")?;
+        stdout.flush()?;
+
         // Enable Kitty keyboard protocol so terminals report Shift+Enter distinctly.
         // Always attempt to push the flags — unsupported terminals silently ignore the
         // escape sequence, and `supports_keyboard_enhancement()` is unreliable (it queries
@@ -319,6 +329,11 @@ impl App {
             let _ = execute!(terminal.backend_mut(), PopKeyboardEnhancementFlags);
         }
         disable_raw_mode()?;
+        // Disable xterm alternate scroll mode before leaving alternate screen
+        {
+            use std::io::Write;
+            let _ = terminal.backend_mut().write_all(b"\x1b[?1007l");
+        }
         execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
         terminal.show_cursor()?;
 
@@ -396,7 +411,7 @@ impl App {
                     layout::Constraint::Length({
                         let input_lines = self.state.input_buffer.matches('\n').count() + 1;
                         (input_lines as u16 + 1).min(8) // +1 for separator, cap at 8
-                    }),               // input
+                    }), // input
                     layout::Constraint::Length(2),               // status bar
                 ]
                 .as_ref(),
@@ -489,7 +504,9 @@ impl App {
         let popup_height = max_show as u16 + 2; // +2 for borders
 
         // Determine title and width based on completion kind
-        let is_file_mode = items.first().is_some_and(|i| i.kind == CompletionKind::File);
+        let is_file_mode = items
+            .first()
+            .is_some_and(|i| i.kind == CompletionKind::File);
         let popup_width = if is_file_mode { 60 } else { 50 };
         let title = if is_file_mode {
             " Files "
@@ -572,6 +589,12 @@ impl App {
             }
             AppEvent::AgentFinished => {
                 self.state.agent_active = false;
+                // Drain pending messages: send the first queued message
+                if let Some(queued_msg) = self.state.pending_messages.first().cloned() {
+                    self.state.pending_messages.remove(0);
+                    self.state.agent_active = true;
+                    let _ = self.event_tx.send(AppEvent::UserSubmit(queued_msg));
+                }
             }
             AppEvent::AgentError(err) => {
                 self.state.agent_active = false;
@@ -606,7 +629,11 @@ impl App {
             }
 
             // Tool events
-            AppEvent::ToolStarted { tool_id, tool_name } => {
+            AppEvent::ToolStarted {
+                tool_id,
+                tool_name,
+                args,
+            } => {
                 self.state.active_tools.push(ToolExecution {
                     id: tool_id,
                     name: tool_name,
@@ -618,6 +645,7 @@ impl App {
                     tick_count: 0,
                     parent_id: None,
                     depth: 0,
+                    args,
                 });
             }
             AppEvent::ToolOutput { tool_id, output } => {
@@ -626,11 +654,21 @@ impl App {
                 }
             }
             AppEvent::ToolResult {
-                tool_id: _,
+                tool_id,
                 tool_name,
                 output,
                 success,
+                args: result_args,
             } => {
+                // Look up stored args from the ToolStarted event, fall back to result args
+                let arguments = self
+                    .state
+                    .active_tools
+                    .iter()
+                    .find(|t| t.id == tool_id)
+                    .map(|t| t.args.clone())
+                    .unwrap_or(result_args);
+
                 let result_lines: Vec<String> =
                     output.lines().take(50).map(|l| l.to_string()).collect();
                 let display_lines = if result_lines.is_empty() && !output.is_empty() {
@@ -644,7 +682,7 @@ impl App {
                         content: String::new(),
                         tool_call: Some(DisplayToolCall {
                             name: tool_name,
-                            arguments: std::collections::HashMap::new(),
+                            arguments,
                             summary: None,
                             success,
                             collapsed: display_lines.len() > 5,
@@ -843,7 +881,9 @@ impl App {
             // Alt+Enter sends Enter with ALT modifier. Both insert a newline.
             (KeyModifiers::CONTROL, KeyCode::Char('j')) => {
                 if !self.state.agent_active {
-                    self.state.input_buffer.insert(self.state.input_cursor, '\n');
+                    self.state
+                        .input_buffer
+                        .insert(self.state.input_cursor, '\n');
                     self.state.input_cursor += '\n'.len_utf8();
                 }
             }
@@ -851,7 +891,9 @@ impl App {
                 if m.contains(KeyModifiers::SHIFT) || m.contains(KeyModifiers::ALT) =>
             {
                 if !self.state.agent_active {
-                    self.state.input_buffer.insert(self.state.input_cursor, '\n');
+                    self.state
+                        .input_buffer
+                        .insert(self.state.input_cursor, '\n');
                     self.state.input_cursor += '\n'.len_utf8();
                 }
             }
@@ -861,7 +903,9 @@ impl App {
                     // Accept autocomplete selection
                     if let Some((insert_text, delete_count)) = self.state.autocomplete.accept() {
                         let start = self.state.input_cursor.saturating_sub(delete_count);
-                        self.state.input_buffer.drain(start..self.state.input_cursor);
+                        self.state
+                            .input_buffer
+                            .drain(start..self.state.input_cursor);
                         self.state.input_cursor = start;
                         self.state
                             .input_buffer
@@ -871,25 +915,35 @@ impl App {
                         self.state.input_buffer.insert(self.state.input_cursor, ' ');
                         self.state.input_cursor += 1;
                     }
-                } else if !self.state.input_buffer.is_empty() && !self.state.agent_active {
+                } else if !self.state.input_buffer.is_empty() {
                     let msg = self.state.input_buffer.clone();
                     self.state.input_buffer.clear();
                     self.state.input_cursor = 0;
                     self.state.autocomplete.dismiss();
 
-                    // Start fading the welcome panel on first user message
-                    if !self.state.welcome_panel.fade_complete
-                        && !self.state.welcome_panel.is_fading
-                    {
-                        self.state.welcome_panel.start_fade();
-                    }
-
-                    if msg.starts_with('/') {
-                        self.execute_slash_command(&msg);
+                    if self.state.agent_active {
+                        // Queue the message for when the agent finishes
+                        self.state.messages.push(DisplayMessage {
+                            role: DisplayRole::User,
+                            content: msg.clone(),
+                            tool_call: None,
+                        });
+                        self.state.pending_messages.push(msg);
                     } else {
-                        self.message_controller
-                            .handle_user_submit(&mut self.state, &msg);
-                        let _ = self.event_tx.send(AppEvent::UserSubmit(msg));
+                        // Start fading the welcome panel on first user message
+                        if !self.state.welcome_panel.fade_complete
+                            && !self.state.welcome_panel.is_fading
+                        {
+                            self.state.welcome_panel.start_fade();
+                        }
+
+                        if msg.starts_with('/') {
+                            self.execute_slash_command(&msg);
+                        } else {
+                            self.message_controller
+                                .handle_user_submit(&mut self.state, &msg);
+                            let _ = self.event_tx.send(AppEvent::UserSubmit(msg));
+                        }
                     }
                 }
             }
@@ -978,7 +1032,9 @@ impl App {
             (_, KeyCode::Tab) => {
                 if let Some((insert_text, delete_count)) = self.state.autocomplete.accept() {
                     let start = self.state.input_cursor.saturating_sub(delete_count);
-                    self.state.input_buffer.drain(start..self.state.input_cursor);
+                    self.state
+                        .input_buffer
+                        .drain(start..self.state.input_cursor);
                     self.state.input_cursor = start;
                     self.state
                         .input_buffer
@@ -994,7 +1050,7 @@ impl App {
                 if self.state.autocomplete.is_visible() {
                     self.state.autocomplete.select_prev();
                 } else {
-                    self.state.scroll_offset = self.state.scroll_offset.saturating_add(1);
+                    self.state.scroll_offset = self.state.scroll_offset.saturating_add(3);
                     self.state.user_scrolled = true;
                 }
             }
@@ -1002,9 +1058,20 @@ impl App {
                 if self.state.autocomplete.is_visible() {
                     self.state.autocomplete.select_next();
                 } else if self.state.scroll_offset > 0 {
-                    self.state.scroll_offset = self.state.scroll_offset.saturating_sub(1);
+                    self.state.scroll_offset = self.state.scroll_offset.saturating_sub(3);
                 } else {
                     self.state.user_scrolled = false;
+                }
+            }
+            // Ctrl+O — toggle collapsed state on the most recent collapsible tool result
+            (KeyModifiers::CONTROL, KeyCode::Char('o')) => {
+                for msg in self.state.messages.iter_mut().rev() {
+                    if let Some(ref mut tc) = msg.tool_call
+                        && !tc.result_lines.is_empty()
+                    {
+                        tc.collapsed = !tc.collapsed;
+                        break;
+                    }
                 }
             }
             // Ctrl+B — show background tasks info

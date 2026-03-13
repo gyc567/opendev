@@ -36,7 +36,11 @@ pub enum AppEvent {
 
     // -- Tool events --
     /// A tool execution started.
-    ToolStarted { tool_id: String, tool_name: String },
+    ToolStarted {
+        tool_id: String,
+        tool_name: String,
+        args: std::collections::HashMap<String, serde_json::Value>,
+    },
     /// A tool produced output.
     ToolOutput { tool_id: String, output: String },
     /// A tool produced its final result.
@@ -45,6 +49,7 @@ pub enum AppEvent {
         tool_name: String,
         output: String,
         success: bool,
+        args: std::collections::HashMap<String, serde_json::Value>,
     },
     /// A tool execution completed.
     ToolFinished { tool_id: String, success: bool },
