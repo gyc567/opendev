@@ -65,69 +65,46 @@ crates/
   opendev-plugins     ← Plugin manager
   opendev-docker      ← Docker runtime support
 ```
+## Post-Change Workflow
 
-### Execution Flow
+**CRITICAL:** After every fix or feature, you MUST complete ALL of these steps before considering the task done. Do NOT skip any step.
 
-1. **CLI** (`opendev-cli/main.rs`) parses args, loads config via `ConfigLoader`, dispatches:
-   - Non-interactive (`-p` flag): single query via `AgentRuntime`
-   - Interactive (default): enters TUI via `TuiRunner`
-   - Subcommands: `config setup`, `mcp`, `run ui`
-2. **AgentRuntime** orchestrates `QueryEnhancer` → `ReactLoop` → `ToolRegistry`
-3. **ReactLoop** (`opendev-agents/react_loop.rs`) is the core agent loop:
-   - Optional thinking phase (with skip heuristic for read-only tools)
-   - Optional critique + refinement (at High thinking level)
-   - Action phase: LLM call with tools → tool execution → loop
-   - Completion via `task_complete` tool or nudge budget exhaustion
+### 1. Unit & Integration Tests
 
-### TUI Architecture
+```bash
+cargo test --workspace
+```
 
-Async event loop with render-from-state pattern. All state in single `AppState`. No separate view layer — widgets read from state directly.
+All tests must pass. If you added new logic, add unit tests covering it. If the change touches cross-crate behavior, add or update integration tests in the relevant `tests/integration.rs`.
 
-**Event sources:** terminal (crossterm), agent (mpsc channel), ticks (60ms for animations)
-**Rendering:** drain ALL queued events before re-rendering (prevents UI lag)
+### 2. Lint & Type Checks
 
-**Layout (top to bottom):**
-- Conversation (flexible) → TodoPanel (0-10) → SubagentDisplay (0-12) → ToolDisplay (8) → TaskProgress (0-1) → Input (2) → StatusBar (2)
+```bash
+cargo clippy --workspace -- -D warnings
+cargo check --workspace
+```
 
-### Provider System
+Zero warnings, zero errors.
 
-All LLM providers unified through `ProviderAdapter` trait that converts to/from a common Chat Completions format. Nine providers supported: OpenAI, Anthropic, Fireworks, Google, Groq, Mistral, DeepInfra, OpenRouter, Azure OpenAI.
+### 3. Rebuild Release Binary
 
-Each provider's models can be independently assigned to 5 workflow slots: Normal, Thinking, Compact, Critique, VLM.
+```bash
+cargo build --release -p opendev-cli
+```
 
-### Tool System
+The binary at `target/release/opendev` is hardlinked to `~/.local/bin/opendev`, so rebuilding automatically updates the installed version.
 
-Three layers: `BaseTool` trait → `ToolRegistry` (HashMap<name, Arc<dyn BaseTool>>) → tool implementations. Tools declare JSON Schema for LLM consumption. Parallelizable tools (read-only) can execute concurrently. `SpawnSubagentTool` is registered late to avoid circular Arc dependencies.
+### 4. Real Simulation Test on TUI
 
-### Prompt Template System
+**CRITICAL:** After rebuilding, you MUST run the actual binary against a real LLM to verify the feature works end-to-end. The `OPENAI_API_KEY` environment variable is already set. Run:
 
-91 templates in `crates/opendev-agents/templates/`, embedded at compile time via `include_str!()` in `embedded.rs`. Resolution priority: filesystem (user override) > embedded. Templates composed via `PromptComposer` with conditional sections filtered by `PromptContext`.
+```bash
+echo "hello" | opendev -p "hello"
+```
 
-### Config System
+Or for interactive TUI testing, launch `opendev` and exercise the feature manually. This catches issues that unit tests cannot — prompt composition, API payload format, TUI rendering, event flow, and real LLM response handling.
 
-Hierarchical merge: project (`.opendev/settings.json`) > user (`~/.opendev/settings.json`) > env vars > defaults. Paths centralized via `Paths` struct. Sessions scoped by working directory with encoded path (e.g., `-Users-foo-bar`).
-
-### Web UI Backend
-
-Axum server with WebSocket for real-time agent events. Approval/ask-user resolved via oneshot channels (non-blocking). Bridge mode allows TUI to own execution while Web UI mirrors messages.
-
-## Key Patterns
-
-- **Workspace dependencies**: Shared deps in root `Cargo.toml` `[workspace.dependencies]`
-- **Async runtime**: Tokio with full features
-- **Error handling**: `thiserror` for library errors, `anyhow` for application errors
-- **Home directory**: Use `dirs-next` (not `dirs`)
-- **Tests**: Use `tempfile::TempDir`, call `.canonicalize()` for macOS `/private/var` symlink resolution
-- **Atomic writes**: Config, sessions, MCP config all use `.tmp` rename pattern
-- **Thinking skip heuristic**: Skip thinking after read-only tool calls that all succeeded
-- **Doom-loop detection**: Tracks repeated failure patterns to avoid infinite retries
-- **Nudge budget**: "No tool calls" responses accepted after 3 nudges to prevent infinite loops
-
-## Agent Design
-
-**CRITICAL:** Never hard-code if/else branching logic to handle LLM conversation flows. The LLM must decide the next step at each turn — not static conditionals. Design agent loops so the model reasons and chooses actions dynamically.
-
-**CRITICAL:** When crafting system prompts, never use table format. Tables are poorly parsed by LLMs and waste tokens. Use plain prose, bullet lists, or structured sections instead.
+**Do NOT consider a feature complete until you have verified it works in the real TUI with a real LLM response.**
 
 ## Code Style
 
