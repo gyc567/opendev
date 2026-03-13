@@ -91,6 +91,16 @@ pub fn detect_trigger(text_before_cursor: &str) -> Option<(Trigger, String)> {
 // ── AutocompleteEngine ─────────────────────────────────────────────
 
 /// Central autocomplete engine that drives the popup.
+impl std::fmt::Debug for AutocompleteEngine {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AutocompleteEngine")
+            .field("visible", &self.visible)
+            .field("selected", &self.selected)
+            .field("items_count", &self.items.len())
+            .finish()
+    }
+}
+
 pub struct AutocompleteEngine {
     command_completer: CommandCompleter,
     file_completer: FileCompleter,
@@ -103,6 +113,8 @@ pub struct AutocompleteEngine {
     selected: usize,
     /// Whether the popup is visible.
     visible: bool,
+    /// Length of the trigger + query text to delete on accept.
+    trigger_len: usize,
 }
 
 impl AutocompleteEngine {
@@ -116,6 +128,7 @@ impl AutocompleteEngine {
             items: Vec::new(),
             selected: 0,
             visible: false,
+            trigger_len: 0,
         }
     }
 
@@ -129,12 +142,14 @@ impl AutocompleteEngine {
                 self.strategy.sort(&mut self.items);
                 self.selected = 0;
                 self.visible = !self.items.is_empty();
+                self.trigger_len = 1 + query.len(); // '/' + query
             }
             Some((Trigger::At, ref query)) => {
                 self.items = self.file_completer.complete(query);
                 self.strategy.sort(&mut self.items);
                 self.selected = 0;
                 self.visible = !self.items.is_empty();
+                self.trigger_len = 1 + query.len(); // '@' + query
             }
             Some((Trigger::Tab, ref query)) => {
                 // Tab completion: try files, then symbols
@@ -144,6 +159,7 @@ impl AutocompleteEngine {
                 self.items = results;
                 self.selected = 0;
                 self.visible = !self.items.is_empty();
+                self.trigger_len = query.len();
             }
             None => {
                 self.dismiss();
@@ -161,10 +177,9 @@ impl AutocompleteEngine {
         }
         let item = &self.items[self.selected];
         let insert = item.insert_text.clone();
+        let delete_count = self.trigger_len;
         self.dismiss();
-        // The caller must figure out how many chars to replace based on the
-        // trigger length; we return the insert text only.
-        Some((insert, 0))
+        Some((insert, delete_count))
     }
 
     /// Move selection up.
@@ -190,6 +205,7 @@ impl AutocompleteEngine {
         self.visible = false;
         self.items.clear();
         self.selected = 0;
+        self.trigger_len = 0;
     }
 
     /// Whether the popup is currently visible.
@@ -338,8 +354,9 @@ mod tests {
         assert!(engine.is_visible());
         let result = engine.accept();
         assert!(result.is_some());
-        let (text, _) = result.unwrap();
+        let (text, delete_count) = result.unwrap();
         assert_eq!(text, "/help");
+        assert_eq!(delete_count, 4); // "/hel" = 4 chars
         assert!(!engine.is_visible());
     }
 

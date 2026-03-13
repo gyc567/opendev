@@ -11,7 +11,7 @@ use crate::event::{AppEvent, EventHandler};
 use crate::managers::InterruptManager;
 use crate::widgets::{
     ConversationWidget, InputWidget, NestedToolWidget, StatusBarWidget, TodoDisplayItem,
-    TodoPanelWidget, ToolDisplayWidget, WelcomePanelState, WelcomePanelWidget,
+    TodoPanelWidget, WelcomePanelState, WelcomePanelWidget,
 };
 use crossterm::{
     event::{
@@ -21,7 +21,6 @@ use crossterm::{
     execute,
     terminal::{
         EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
-        supports_keyboard_enhancement,
     },
 };
 use ratatui::{Terminal, backend::CrosstermBackend, layout};
@@ -65,7 +64,7 @@ impl std::fmt::Display for AutonomyLevel {
 pub use opendev_runtime::ThinkingLevel;
 
 /// Persistent application state shared across renders.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct AppState {
     /// Whether the app is running.
     pub running: bool,
@@ -113,12 +112,8 @@ pub struct AppState {
     pub scroll_offset: u16,
     /// Whether the user has scrolled up (disables auto-scroll).
     pub user_scrolled: bool,
-    /// Autocomplete suggestions for slash commands.
-    pub autocomplete_suggestions: Vec<&'static crate::controllers::slash_commands::SlashCommand>,
-    /// Whether autocomplete popup is visible.
-    pub autocomplete_visible: bool,
-    /// Selected index in autocomplete list.
-    pub autocomplete_index: usize,
+    /// Autocomplete engine for `/` commands and `@` file mentions.
+    pub autocomplete: crate::autocomplete::AutocompleteEngine,
     /// Number of running background tasks.
     pub background_task_count: usize,
     /// Active subagent executions for nested display.
@@ -215,9 +210,9 @@ impl Default for AppState {
             active_tools: Vec::new(),
             scroll_offset: 0,
             user_scrolled: false,
-            autocomplete_suggestions: Vec::new(),
-            autocomplete_visible: false,
-            autocomplete_index: 0,
+            autocomplete: crate::autocomplete::AutocompleteEngine::new(
+                std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
+            ),
             background_task_count: 0,
             active_subagents: Vec::new(),
             todo_items: Vec::new(),
@@ -296,15 +291,18 @@ impl App {
         let mut stdout = io::stdout();
         execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
 
-        // Enable Kitty keyboard protocol so terminals report Shift+Enter distinctly
-        let keyboard_enhanced = matches!(supports_keyboard_enhancement(), Ok(true))
-            && execute!(
-                io::stdout(),
-                PushKeyboardEnhancementFlags(
-                    KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
-                )
+        // Enable Kitty keyboard protocol so terminals report Shift+Enter distinctly.
+        // Always attempt to push the flags — unsupported terminals silently ignore the
+        // escape sequence, and `supports_keyboard_enhancement()` is unreliable (it queries
+        // the terminal and can timeout, returning false on terminals that DO support it).
+        let keyboard_enhanced = execute!(
+            io::stdout(),
+            PushKeyboardEnhancementFlags(
+                KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+                    | KeyboardEnhancementFlags::REPORT_EVENT_TYPES
             )
-            .is_ok();
+        )
+        .is_ok();
 
         let backend = CrosstermBackend::new(stdout);
         let mut terminal = Terminal::new(backend)?;
@@ -369,11 +367,10 @@ impl App {
         let area = frame.area();
 
         // Layout: conversation (flexible) | todo panel (if active) | subagent display (if active)
-        //         | tool display (if active) | progress (if active) | input (3 lines) | status bar (1 line)
-        let has_tools = !self.state.active_tools.is_empty();
+        //         | input | status bar
+        // Tool spinners and thinking progress are rendered inline in the conversation area.
         let has_subagents = !self.state.active_subagents.is_empty();
         let has_todos = !self.state.todo_items.is_empty();
-        let tool_height = if has_tools { 8 } else { 0 };
         let todo_height: u16 = if has_todos {
             // 2 borders + 1 progress bar + items (capped)
             (self.state.todo_items.len() as u16 + 3).min(10)
@@ -392,11 +389,6 @@ impl App {
         } else {
             0
         };
-        let progress_height: u16 = if self.state.task_progress.is_some() {
-            1
-        } else {
-            0
-        };
 
         let chunks = layout::Layout::default()
             .direction(layout::Direction::Vertical)
@@ -405,9 +397,10 @@ impl App {
                     layout::Constraint::Min(5),                  // conversation
                     layout::Constraint::Length(todo_height),     // todo panel
                     layout::Constraint::Length(subagent_height), // subagent display
-                    layout::Constraint::Length(tool_height),     // tool display
-                    layout::Constraint::Length(progress_height), // task progress
-                    layout::Constraint::Length(2),               // input
+                    layout::Constraint::Length({
+                        let input_lines = self.state.input_buffer.matches('\n').count() + 1;
+                        (input_lines as u16 + 1).min(8) // +1 for separator, cap at 8
+                    }),               // input
                     layout::Constraint::Length(2),               // status bar
                 ]
                 .as_ref(),
@@ -432,7 +425,10 @@ impl App {
                     .terminal_width(area.width)
                     .version(&self.state.version)
                     .working_dir(&self.state.working_dir)
-                    .mode(mode_str);
+                    .mode(mode_str)
+                    .active_tools(&self.state.active_tools)
+                    .task_progress(self.state.task_progress.as_ref())
+                    .spinner_char(self.state.spinner.current());
             frame.render_widget(conversation, chunks[0]);
         }
 
@@ -451,19 +447,6 @@ impl App {
             frame.render_widget(subagent_display, chunks[2]);
         }
 
-        // Tool display (only if active)
-        if has_tools {
-            let tool_display = ToolDisplayWidget::new(&self.state.active_tools);
-            frame.render_widget(tool_display, chunks[3]);
-        }
-
-        // Task progress (only if active)
-        if let Some(ref progress) = self.state.task_progress {
-            let progress_widget =
-                crate::widgets::progress::TaskProgressWidget::new(progress, &self.state.spinner);
-            frame.render_widget(progress_widget, chunks[4]);
-        }
-
         // Input
         let input = InputWidget::new(
             &self.state.input_buffer,
@@ -471,11 +454,11 @@ impl App {
             self.state.agent_active,
             mode_str,
         );
-        frame.render_widget(input, chunks[5]);
+        frame.render_widget(input, chunks[3]);
 
         // Autocomplete popup (rendered over conversation area)
-        if self.state.autocomplete_visible && !self.state.autocomplete_suggestions.is_empty() {
-            self.render_autocomplete(frame, chunks[5]);
+        if self.state.autocomplete.is_visible() {
+            self.render_autocomplete(frame, chunks[3]);
         }
 
         // Status bar
@@ -493,34 +476,48 @@ impl App {
         .session_cost(self.state.session_cost)
         .mcp_status(self.state.mcp_status, self.state.mcp_has_errors)
         .background_tasks(self.state.background_task_count);
-        frame.render_widget(status, chunks[6]);
+        frame.render_widget(status, chunks[4]);
     }
 
     /// Render autocomplete popup above the input area.
     fn render_autocomplete(&self, frame: &mut ratatui::Frame, input_area: layout::Rect) {
+        use crate::autocomplete::CompletionKind;
         use crate::formatters::style_tokens;
         use ratatui::style::{Modifier, Style};
         use ratatui::text::{Line, Span};
         use ratatui::widgets::{Block, Borders, Paragraph};
 
-        let suggestions = &self.state.autocomplete_suggestions;
-        let max_show = suggestions.len().min(8);
+        let items = self.state.autocomplete.items();
+        let selected_idx = self.state.autocomplete.selected_index();
+        let max_show = items.len().min(10);
         let popup_height = max_show as u16 + 2; // +2 for borders
+
+        // Determine title and width based on completion kind
+        let is_file_mode = items.first().is_some_and(|i| i.kind == CompletionKind::File);
+        let popup_width = if is_file_mode { 60 } else { 50 };
+        let title = if is_file_mode {
+            " Files "
+        } else {
+            " Commands "
+        };
 
         let popup_area = layout::Rect {
             x: input_area.x,
             y: input_area.y.saturating_sub(popup_height),
-            width: input_area.width.min(50),
+            width: input_area.width.min(popup_width),
             height: popup_height,
         };
 
-        let lines: Vec<Line> = suggestions
+        let lines: Vec<Line> = items
             .iter()
             .take(max_show)
             .enumerate()
-            .map(|(i, cmd)| {
-                let selected = i == self.state.autocomplete_index;
-                let style = if selected {
+            .map(|(i, item)| {
+                let selected = i == selected_idx;
+                let (left, right) =
+                    crate::autocomplete::formatters::CompletionFormatter::format(item);
+
+                let label_style = if selected {
                     Style::default()
                         .fg(style_tokens::CODE_BG)
                         .bg(style_tokens::CYAN)
@@ -528,18 +525,17 @@ impl App {
                 } else {
                     Style::default().fg(style_tokens::PRIMARY)
                 };
+                let desc_style = if selected {
+                    Style::default()
+                        .fg(style_tokens::CODE_BG)
+                        .bg(style_tokens::CYAN)
+                } else {
+                    Style::default().fg(style_tokens::SUBTLE)
+                };
+
                 Line::from(vec![
-                    Span::styled(format!("  /{:<16}", cmd.name), style),
-                    Span::styled(
-                        cmd.description.to_string(),
-                        if selected {
-                            Style::default()
-                                .fg(style_tokens::CODE_BG)
-                                .bg(style_tokens::CYAN)
-                        } else {
-                            Style::default().fg(style_tokens::SUBTLE)
-                        },
-                    ),
+                    Span::styled(format!("  {left}"), label_style),
+                    Span::styled(format!(" {right}"), desc_style),
                 ])
             })
             .collect();
@@ -548,7 +544,7 @@ impl App {
             .borders(Borders::ALL)
             .border_style(Style::default().fg(style_tokens::BORDER))
             .title(Span::styled(
-                " Commands ",
+                title,
                 Style::default()
                     .fg(style_tokens::CYAN)
                     .add_modifier(Modifier::BOLD),
@@ -756,6 +752,11 @@ impl App {
 
     /// Handle a key press event.
     fn handle_key(&mut self, key: crossterm::event::KeyEvent) {
+        // Only process key-press events (Kitty protocol also sends Release/Repeat)
+        if key.kind != crossterm::event::KeyEventKind::Press {
+            return;
+        }
+
         // Delegate to approval controller when active
         if self.approval_controller.active() {
             match key.code {
@@ -781,18 +782,45 @@ impl App {
                     self.state.input_cursor = 0;
                 }
             }
-            // Escape — interrupt agent
+            // Escape — dismiss autocomplete or interrupt agent
             (_, KeyCode::Esc) => {
-                let _ = self.event_tx.send(AppEvent::Interrupt);
+                if self.state.autocomplete.is_visible() {
+                    self.state.autocomplete.dismiss();
+                } else {
+                    let _ = self.event_tx.send(AppEvent::Interrupt);
+                }
             }
-            // Enter — submit message or execute slash command
+            // Shift+Enter or Alt+Enter — insert newline in input buffer
+            // Use contains() so extra modifier bits don't prevent matching.
+            (m, KeyCode::Enter)
+                if m.contains(KeyModifiers::SHIFT) || m.contains(KeyModifiers::ALT) =>
+            {
+                if !self.state.agent_active {
+                    self.state.input_buffer.insert(self.state.input_cursor, '\n');
+                    self.state.input_cursor += 1;
+                }
+            }
+            // Enter — accept autocomplete, submit message, or execute slash command
             (_, KeyCode::Enter) => {
-                if !self.state.input_buffer.is_empty() && !self.state.agent_active {
+                if self.state.autocomplete.is_visible() {
+                    // Accept autocomplete selection
+                    if let Some((insert_text, delete_count)) = self.state.autocomplete.accept() {
+                        let start = self.state.input_cursor.saturating_sub(delete_count);
+                        self.state.input_buffer.drain(start..self.state.input_cursor);
+                        self.state.input_cursor = start;
+                        self.state
+                            .input_buffer
+                            .insert_str(self.state.input_cursor, &insert_text);
+                        self.state.input_cursor += insert_text.len();
+                        // Add trailing space
+                        self.state.input_buffer.insert(self.state.input_cursor, ' ');
+                        self.state.input_cursor += 1;
+                    }
+                } else if !self.state.input_buffer.is_empty() && !self.state.agent_active {
                     let msg = self.state.input_buffer.clone();
                     self.state.input_buffer.clear();
                     self.state.input_cursor = 0;
-                    self.state.autocomplete_visible = false;
-                    self.state.autocomplete_suggestions.clear();
+                    self.state.autocomplete.dismiss();
 
                     // Start fading the welcome panel on first user message
                     if !self.state.welcome_panel.fade_complete
@@ -815,12 +843,14 @@ impl App {
                 if self.state.input_cursor > 0 {
                     self.state.input_cursor -= 1;
                     self.state.input_buffer.remove(self.state.input_cursor);
+                    self.update_autocomplete();
                 }
             }
             // Delete
             (_, KeyCode::Delete) => {
                 if self.state.input_cursor < self.state.input_buffer.len() {
                     self.state.input_buffer.remove(self.state.input_cursor);
+                    self.update_autocomplete();
                 }
             }
             // Left arrow
@@ -888,37 +918,31 @@ impl App {
             }
             // Tab — accept autocomplete suggestion
             (_, KeyCode::Tab) => {
-                if self.state.autocomplete_visible
-                    && !self.state.autocomplete_suggestions.is_empty()
-                {
-                    let cmd = self.state.autocomplete_suggestions[self.state.autocomplete_index];
-                    self.state.input_buffer = format!("/{}", cmd.name);
-                    self.state.input_cursor = self.state.input_buffer.len();
-                    self.state.autocomplete_visible = false;
-                    self.state.autocomplete_suggestions.clear();
+                if let Some((insert_text, delete_count)) = self.state.autocomplete.accept() {
+                    let start = self.state.input_cursor.saturating_sub(delete_count);
+                    self.state.input_buffer.drain(start..self.state.input_cursor);
+                    self.state.input_cursor = start;
+                    self.state
+                        .input_buffer
+                        .insert_str(self.state.input_cursor, &insert_text);
+                    self.state.input_cursor += insert_text.len();
+                    // Add trailing space
+                    self.state.input_buffer.insert(self.state.input_cursor, ' ');
+                    self.state.input_cursor += 1;
                 }
             }
-            // Up/Down arrow — navigate autocomplete
+            // Up/Down arrow — navigate autocomplete or scroll
             (_, KeyCode::Up) => {
-                if self.state.autocomplete_visible
-                    && !self.state.autocomplete_suggestions.is_empty()
-                {
-                    if self.state.autocomplete_index > 0 {
-                        self.state.autocomplete_index -= 1;
-                    }
+                if self.state.autocomplete.is_visible() {
+                    self.state.autocomplete.select_prev();
                 } else {
                     self.state.scroll_offset = self.state.scroll_offset.saturating_add(1);
                     self.state.user_scrolled = true;
                 }
             }
             (_, KeyCode::Down) => {
-                if self.state.autocomplete_visible
-                    && !self.state.autocomplete_suggestions.is_empty()
-                {
-                    if self.state.autocomplete_index < self.state.autocomplete_suggestions.len() - 1
-                    {
-                        self.state.autocomplete_index += 1;
-                    }
+                if self.state.autocomplete.is_visible() {
+                    self.state.autocomplete.select_next();
                 } else if self.state.scroll_offset > 0 {
                     self.state.scroll_offset = self.state.scroll_offset.saturating_sub(1);
                 } else {
@@ -956,16 +980,12 @@ impl App {
 
     /// Update autocomplete suggestions based on current input.
     fn update_autocomplete(&mut self) {
-        if self.state.input_buffer.starts_with('/') && !self.state.agent_active {
-            let query = &self.state.input_buffer[1..]; // strip leading /
-            self.state.autocomplete_suggestions =
-                crate::controllers::slash_commands::find_matching_commands(query);
-            self.state.autocomplete_visible = !self.state.autocomplete_suggestions.is_empty();
-            self.state.autocomplete_index = 0;
-        } else {
-            self.state.autocomplete_visible = false;
-            self.state.autocomplete_suggestions.clear();
+        if self.state.agent_active {
+            self.state.autocomplete.dismiss();
+            return;
         }
+        let text_before_cursor = self.state.input_buffer[..self.state.input_cursor].to_string();
+        self.state.autocomplete.update(&text_before_cursor);
     }
 
     /// Execute a slash command locally.

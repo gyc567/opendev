@@ -12,12 +12,13 @@ use ratatui::{
     widgets::{Paragraph, Widget, Wrap},
 };
 
-use crate::app::{DisplayMessage, DisplayRole, DisplayToolCall};
+use crate::app::{DisplayMessage, DisplayRole, DisplayToolCall, ToolExecution};
 use crate::formatters::display::strip_system_reminders;
 use crate::formatters::markdown::MarkdownRenderer;
 use crate::formatters::style_tokens;
 use crate::formatters::tool_colors::{categorize_tool, format_tool_call_display, tool_color};
-use crate::widgets::spinner::{COMPLETED_CHAR, CONTINUATION_CHAR};
+use crate::widgets::progress::TaskProgress;
+use crate::widgets::spinner::{COMPLETED_CHAR, CONTINUATION_CHAR, SPINNER_FRAMES};
 
 /// Widget that renders the conversation log.
 pub struct ConversationWidget<'a> {
@@ -27,6 +28,12 @@ pub struct ConversationWidget<'a> {
     version: &'a str,
     working_dir: &'a str,
     mode: &'a str,
+    /// Active tool executions (shown as inline spinners).
+    active_tools: &'a [ToolExecution],
+    /// Task progress (thinking state, shown when no active tools).
+    task_progress: Option<&'a TaskProgress>,
+    /// Pre-computed spinner character for the current frame.
+    spinner_char: char,
 }
 
 impl<'a> ConversationWidget<'a> {
@@ -38,6 +45,9 @@ impl<'a> ConversationWidget<'a> {
             version: "0.1.0",
             working_dir: ".",
             mode: "NORMAL",
+            active_tools: &[],
+            task_progress: None,
+            spinner_char: SPINNER_FRAMES[0],
         }
     }
 
@@ -58,6 +68,21 @@ impl<'a> ConversationWidget<'a> {
 
     pub fn mode(mut self, mode: &'a str) -> Self {
         self.mode = mode;
+        self
+    }
+
+    pub fn active_tools(mut self, tools: &'a [ToolExecution]) -> Self {
+        self.active_tools = tools;
+        self
+    }
+
+    pub fn task_progress(mut self, progress: Option<&'a TaskProgress>) -> Self {
+        self.task_progress = progress;
+        self
+    }
+
+    pub fn spinner_char(mut self, ch: char) -> Self {
+        self.spinner_char = ch;
         self
     }
 
@@ -241,6 +266,52 @@ impl<'a> ConversationWidget<'a> {
             lines.push(Line::from(""));
         }
 
+        // Inline spinner lines at the bottom of the conversation
+        let active_unfinished: Vec<_> = self
+            .active_tools
+            .iter()
+            .filter(|t| !t.finished)
+            .collect();
+
+        if !active_unfinished.is_empty() {
+            for tool in &active_unfinished {
+                let category = categorize_tool(&tool.name);
+                let name_color = tool_color(category);
+                let frame_idx = tool.tick_count % SPINNER_FRAMES.len();
+                let spinner = SPINNER_FRAMES[frame_idx];
+                lines.push(Line::from(vec![
+                    Span::styled(
+                        format!("  {spinner} "),
+                        Style::default().fg(style_tokens::BLUE_BRIGHT),
+                    ),
+                    Span::styled(
+                        tool.name.clone(),
+                        Style::default().fg(name_color).add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(
+                        format!(" ({}s)", tool.elapsed_secs),
+                        Style::default().fg(style_tokens::GREY),
+                    ),
+                ]));
+            }
+        } else if let Some(progress) = self.task_progress {
+            let elapsed = progress.started_at.elapsed().as_secs();
+            lines.push(Line::from(vec![
+                Span::styled(
+                    format!("  {} ", self.spinner_char),
+                    Style::default().fg(style_tokens::BLUE_BRIGHT),
+                ),
+                Span::styled(
+                    format!("{}... ", progress.description),
+                    Style::default().fg(style_tokens::SUBTLE),
+                ),
+                Span::styled(
+                    format!("({}s \u{00b7} esc to interrupt)", elapsed),
+                    Style::default().fg(style_tokens::SUBTLE),
+                ),
+            ]));
+        }
+
         lines
     }
 }
@@ -392,6 +463,114 @@ mod tests {
             .map(|s| s.content.to_string())
             .collect();
         assert!(text.contains("collapsed"));
+    }
+
+    #[test]
+    fn test_inline_spinner_active_tools() {
+        let msgs = vec![DisplayMessage {
+            role: DisplayRole::User,
+            content: "Do something".into(),
+            tool_call: None,
+        }];
+        let tools = vec![ToolExecution {
+            id: "t1".into(),
+            name: "bash".into(),
+            output_lines: vec![],
+            finished: false,
+            success: false,
+            elapsed_secs: 3,
+            started_at: std::time::Instant::now(),
+            tick_count: 0,
+            parent_id: None,
+            depth: 0,
+        }];
+        let widget = ConversationWidget::new(&msgs, 0).active_tools(&tools);
+        let lines = widget.build_lines();
+        let text: String = lines
+            .iter()
+            .flat_map(|l| l.spans.iter())
+            .map(|s| s.content.to_string())
+            .collect();
+        assert!(text.contains("bash"));
+        assert!(text.contains("(3s)"));
+    }
+
+    #[test]
+    fn test_inline_spinner_thinking() {
+        let msgs = vec![DisplayMessage {
+            role: DisplayRole::User,
+            content: "Hello".into(),
+            tool_call: None,
+        }];
+        let progress = TaskProgress {
+            description: "Thinking".to_string(),
+            elapsed_secs: 5,
+            token_display: None,
+            interrupted: false,
+            started_at: std::time::Instant::now(),
+        };
+        let widget = ConversationWidget::new(&msgs, 0).task_progress(Some(&progress));
+        let lines = widget.build_lines();
+        let text: String = lines
+            .iter()
+            .flat_map(|l| l.spans.iter())
+            .map(|s| s.content.to_string())
+            .collect();
+        assert!(text.contains("Thinking..."));
+        assert!(text.contains("esc to interrupt"));
+    }
+
+    #[test]
+    fn test_inline_spinner_tools_take_priority_over_thinking() {
+        let msgs = vec![DisplayMessage {
+            role: DisplayRole::User,
+            content: "Hello".into(),
+            tool_call: None,
+        }];
+        let tools = vec![ToolExecution {
+            id: "t1".into(),
+            name: "read_file".into(),
+            output_lines: vec![],
+            finished: false,
+            success: false,
+            elapsed_secs: 1,
+            started_at: std::time::Instant::now(),
+            tick_count: 2,
+            parent_id: None,
+            depth: 0,
+        }];
+        let progress = TaskProgress {
+            description: "Thinking".to_string(),
+            elapsed_secs: 5,
+            token_display: None,
+            interrupted: false,
+            started_at: std::time::Instant::now(),
+        };
+        let widget = ConversationWidget::new(&msgs, 0)
+            .active_tools(&tools)
+            .task_progress(Some(&progress));
+        let lines = widget.build_lines();
+        let text: String = lines
+            .iter()
+            .flat_map(|l| l.spans.iter())
+            .map(|s| s.content.to_string())
+            .collect();
+        // Active tools shown, not thinking
+        assert!(text.contains("read_file"));
+        assert!(!text.contains("Thinking..."));
+    }
+
+    #[test]
+    fn test_no_spinner_when_idle() {
+        let msgs = vec![DisplayMessage {
+            role: DisplayRole::User,
+            content: "Hello".into(),
+            tool_call: None,
+        }];
+        let widget = ConversationWidget::new(&msgs, 0);
+        let lines = widget.build_lines();
+        // Only message line + blank line, no spinner
+        assert_eq!(lines.len(), 2);
     }
 
     #[test]

@@ -3,6 +3,7 @@
 //! Mirrors the Python `FileFinder` and `FileSizeFormatter` classes, using the
 //! `ignore` crate for `.gitignore`-aware directory walking.
 
+use std::cell::RefCell;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -65,8 +66,8 @@ const LIKELY_EXCLUDE: &[&str] = &[
 pub struct FileFinder {
     working_dir: PathBuf,
     /// Cached entries: each is a relative path (lowered for matching) + original relative path.
-    cache: Vec<(String, PathBuf)>,
-    cache_time: Option<Instant>,
+    cache: RefCell<Vec<(String, PathBuf)>>,
+    cache_time: RefCell<Option<Instant>>,
     exclude_set: HashSet<&'static str>,
     has_gitignore: bool,
 }
@@ -81,8 +82,8 @@ impl FileFinder {
         }
         Self {
             working_dir,
-            cache: Vec::new(),
-            cache_time: None,
+            cache: RefCell::new(Vec::new()),
+            cache_time: RefCell::new(None),
             exclude_set,
             has_gitignore,
         }
@@ -97,55 +98,52 @@ impl FileFinder {
     ///
     /// Returns relative paths sorted by path length then alphabetically.
     pub fn find_files(&self, query: &str, max_results: usize) -> Vec<PathBuf> {
-        // We need interior mutability for caching. Use a simple approach:
-        // rebuild if needed. Since we take `&self` we use an unsafe-free
-        // workaround by just scanning on every call when the cache is cold.
-        // In a real app you'd use `RefCell` or `Mutex`.
-
-        let entries = self.scan_entries();
+        self.ensure_cache();
         let query_lower = query.to_lowercase();
+        let cache = self.cache.borrow();
 
-        entries
-            .into_iter()
+        cache
+            .iter()
             .filter(|(lower, _)| query_lower.is_empty() || lower.contains(&query_lower))
-            .map(|(_, p)| p)
+            .map(|(_, p)| p.clone())
             .take(max_results)
             .collect()
     }
 
     /// Force a fresh directory scan (ignoring any cache).
-    pub fn invalidate_cache(&mut self) {
-        self.cache.clear();
-        self.cache_time = None;
+    pub fn invalidate_cache(&self) {
+        self.cache.borrow_mut().clear();
+        *self.cache_time.borrow_mut() = None;
     }
 
     // ── Internal ───────────────────────────────────────────────────
 
     fn is_cache_valid(&self) -> bool {
         self.cache_time
-            .map(|t| t.elapsed() < CACHE_TTL && !self.cache.is_empty())
+            .borrow()
+            .map(|t| t.elapsed() < CACHE_TTL && !self.cache.borrow().is_empty())
             .unwrap_or(false)
     }
 
-    fn scan_entries(&self) -> Vec<(String, PathBuf)> {
+    /// Populate the cache if it is stale or empty.
+    fn ensure_cache(&self) {
         if self.is_cache_valid() {
-            return self.cache.clone();
+            return;
         }
 
         let mut entries: Vec<(String, PathBuf)> = Vec::new();
 
         if self.has_gitignore {
-            // Use the `ignore` crate for proper .gitignore handling
             self.walk_with_ignore(&mut entries);
         } else {
-            // Fallback: manual walk with exclude set
             self.walk_manual(&self.working_dir, &mut entries);
         }
 
         // Sort by path length then alphabetically
         entries.sort_by(|a, b| a.0.len().cmp(&b.0.len()).then_with(|| a.0.cmp(&b.0)));
 
-        entries
+        *self.cache.borrow_mut() = entries;
+        *self.cache_time.borrow_mut() = Some(Instant::now());
     }
 
     fn walk_with_ignore(&self, entries: &mut Vec<(String, PathBuf)>) {
@@ -205,12 +203,10 @@ impl FileFinder {
                     entries.push((lower, rel_path));
                 }
                 self.walk_manual(&path, entries);
-            } else {
-                if let Ok(rel) = path.strip_prefix(&self.working_dir) {
-                    let rel_path = rel.to_path_buf();
-                    let lower = rel_path.to_string_lossy().to_lowercase();
-                    entries.push((lower, rel_path));
-                }
+            } else if let Ok(rel) = path.strip_prefix(&self.working_dir) {
+                let rel_path = rel.to_path_buf();
+                let lower = rel_path.to_string_lossy().to_lowercase();
+                entries.push((lower, rel_path));
             }
         }
     }
