@@ -550,6 +550,57 @@ impl ReactLoop {
         let _react_guard = _react_span.enter();
         drop(_react_guard); // Don't hold guard across awaits; span is still active as parent
 
+        // Run the loop body, then reset any stuck todos on exit (interrupt, error, or completion).
+        let result = self
+            .run_inner(
+                caller,
+                http_client,
+                messages,
+                tool_schemas,
+                tool_registry,
+                tool_context,
+                task_monitor,
+                event_callback,
+                cost_tracker,
+                artifact_index,
+                compactor,
+                todo_manager,
+            )
+            .await;
+
+        // Reset any "doing" todos back to "pending" on exit — mirrors Python's
+        // _reset_stuck_todos() in the finally block.
+        if let Some(mgr) = todo_manager
+            && let Ok(mut mgr) = mgr.lock()
+        {
+            let reset = mgr.reset_stuck_todos();
+            if reset > 0 {
+                info!(count = reset, "Reset stuck 'doing' todos back to 'pending'");
+            }
+        }
+
+        result
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn run_inner<M>(
+        &self,
+        caller: &LlmCaller,
+        http_client: &AdaptedClient,
+        messages: &mut Vec<Value>,
+        tool_schemas: &[Value],
+        tool_registry: &ToolRegistry,
+        tool_context: &ToolContext,
+        task_monitor: Option<&M>,
+        event_callback: Option<&dyn crate::traits::AgentEventCallback>,
+        cost_tracker: Option<&Mutex<CostTracker>>,
+        artifact_index: Option<&Mutex<ArtifactIndex>>,
+        compactor: Option<&Mutex<ContextCompactor>>,
+        todo_manager: Option<&Mutex<TodoManager>>,
+    ) -> Result<AgentResult, AgentError>
+    where
+        M: TaskMonitor + ?Sized,
+    {
         let mut iteration: usize = 0;
         let mut consecutive_no_tool_calls: usize = 0;
         let mut doom_detector = DoomLoopDetector::new();

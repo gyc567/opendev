@@ -352,6 +352,25 @@ impl TodoManager {
             })
     }
 
+    /// Reset all "doing" (in-progress) todos back to "pending".
+    ///
+    /// Called when the agent loop exits (interrupt, error, timeout, or normal
+    /// completion) to ensure no todos remain spinning in "doing" state.
+    /// Returns the number of items reset.
+    pub fn reset_stuck_todos(&mut self) -> usize {
+        let now = Utc::now().to_rfc3339();
+        let mut count = 0;
+        for item in self.todos.values_mut() {
+            if item.status == TodoStatus::InProgress {
+                item.status = TodoStatus::Pending;
+                item.updated_at = now.clone();
+                debug!(id = item.id, title = %item.title, "Reset stuck 'doing' todo back to 'pending'");
+                count += 1;
+            }
+        }
+        count
+    }
+
     /// Whether there are any non-completed todos.
     pub fn has_incomplete_todos(&self) -> bool {
         self.todos
@@ -794,6 +813,35 @@ Do some stuff.
         assert_eq!(parse_status("done"), Some(TodoStatus::Completed));
         assert_eq!(parse_status("complete"), Some(TodoStatus::Completed));
         assert_eq!(parse_status("unknown"), None);
+    }
+
+    #[test]
+    fn test_reset_stuck_todos() {
+        let mut mgr = TodoManager::from_steps(&["A".into(), "B".into(), "C".into()]);
+        mgr.start(1);
+        mgr.complete(3);
+
+        // A is "doing", B is "pending", C is "done"
+        assert_eq!(mgr.get(1).unwrap().status, TodoStatus::InProgress);
+        assert_eq!(mgr.get(2).unwrap().status, TodoStatus::Pending);
+        assert_eq!(mgr.get(3).unwrap().status, TodoStatus::Completed);
+
+        let reset_count = mgr.reset_stuck_todos();
+        assert_eq!(reset_count, 1);
+        // A should be reset to pending
+        assert_eq!(mgr.get(1).unwrap().status, TodoStatus::Pending);
+        // B stays pending
+        assert_eq!(mgr.get(2).unwrap().status, TodoStatus::Pending);
+        // C stays done
+        assert_eq!(mgr.get(3).unwrap().status, TodoStatus::Completed);
+    }
+
+    #[test]
+    fn test_reset_stuck_todos_none_doing() {
+        let mut mgr = TodoManager::from_steps(&["A".into(), "B".into()]);
+        mgr.complete(1);
+        let reset_count = mgr.reset_stuck_todos();
+        assert_eq!(reset_count, 0);
     }
 
     #[test]
