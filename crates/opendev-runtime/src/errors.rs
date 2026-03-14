@@ -40,11 +40,17 @@ pub enum RecoveryStrategy {
         max_attempts: u32,
     },
     /// Fall back to an alternative model.
-    FallbackModel(String),
+    FallbackModel {
+        /// The model identifier to fall back to.
+        model: String,
+    },
     /// Reduce the context window and retry.
     ReduceContext,
     /// Require user intervention with a descriptive message.
-    UserIntervention(String),
+    UserIntervention {
+        /// Description of what the user should do.
+        message: String,
+    },
 }
 
 impl RecoveryStrategy {
@@ -167,12 +173,12 @@ impl StructuredError {
                 delay_ms: 0,
                 max_attempts: 1,
             },
-            ErrorCategory::Auth => RecoveryStrategy::UserIntervention(
-                "Check your API key and authentication settings.".into(),
-            ),
-            ErrorCategory::Permission => RecoveryStrategy::UserIntervention(
-                "Insufficient permissions. Check your access rights.".into(),
-            ),
+            ErrorCategory::Auth => RecoveryStrategy::UserIntervention {
+                message: "Check your API key and authentication settings.".into(),
+            },
+            ErrorCategory::Permission => RecoveryStrategy::UserIntervention {
+                message: "Insufficient permissions. Check your access rights.".into(),
+            },
             ErrorCategory::Gateway => RecoveryStrategy::Retry {
                 delay_ms: 3000,
                 max_attempts: 3,
@@ -184,18 +190,20 @@ impl StructuredError {
                         max_attempts: 3,
                     }
                 } else {
-                    RecoveryStrategy::FallbackModel("default".into())
+                    RecoveryStrategy::FallbackModel {
+                        model: "default".into(),
+                    }
                 }
             }
-            ErrorCategory::EditMismatch => RecoveryStrategy::UserIntervention(
-                "The edit target was not found. Review the file content.".into(),
-            ),
-            ErrorCategory::FileNotFound => RecoveryStrategy::UserIntervention(
-                "File not found. Check the path and try again.".into(),
-            ),
-            ErrorCategory::Unknown => RecoveryStrategy::UserIntervention(
-                "An unexpected error occurred. Please try again.".into(),
-            ),
+            ErrorCategory::EditMismatch => RecoveryStrategy::UserIntervention {
+                message: "The edit target was not found. Review the file content.".into(),
+            },
+            ErrorCategory::FileNotFound => RecoveryStrategy::UserIntervention {
+                message: "File not found. Check the path and try again.".into(),
+            },
+            ErrorCategory::Unknown => RecoveryStrategy::UserIntervention {
+                message: "An unexpected error occurred. Please try again.".into(),
+            },
         }
     }
 
@@ -728,8 +736,8 @@ mod tests {
     fn test_recovery_strategy_auth() {
         let err = StructuredError::auth("bad key", Some(401), None);
         match err.recovery_strategy() {
-            RecoveryStrategy::UserIntervention(msg) => {
-                assert!(msg.contains("API key"));
+            RecoveryStrategy::UserIntervention { message } => {
+                assert!(message.contains("API key"));
             }
             other => panic!("Expected UserIntervention, got {:?}", other),
         }
@@ -748,7 +756,7 @@ mod tests {
     fn test_recovery_strategy_non_retryable_api() {
         let err = StructuredError::api("bad request", Some(400));
         match err.recovery_strategy() {
-            RecoveryStrategy::FallbackModel(model) => {
+            RecoveryStrategy::FallbackModel { model } => {
                 assert_eq!(model, "default");
             }
             other => panic!("Expected FallbackModel, got {:?}", other),
@@ -784,9 +792,12 @@ mod tests {
 
     #[test]
     fn test_recovery_strategy_fallback_serialization() {
-        let strategy = RecoveryStrategy::FallbackModel("gpt-4".into());
+        let strategy = RecoveryStrategy::FallbackModel {
+            model: "gpt-4".into(),
+        };
         let json = strategy.to_json();
         assert_eq!(json["type"], "fallback_model");
+        assert_eq!(json["model"], "gpt-4");
     }
 
     #[test]

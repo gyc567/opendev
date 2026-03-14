@@ -194,6 +194,9 @@ impl CostTracker {
             serde_json::json!(self.total_output_tokens),
         );
         map.insert("api_call_count".into(), serde_json::json!(self.call_count));
+        if let Some(budget) = self.budget_usd {
+            map.insert("budget_usd".into(), serde_json::json!(round_f64(budget, 6)));
+        }
         map
     }
 
@@ -220,6 +223,7 @@ impl CostTracker {
             .get("api_call_count")
             .and_then(|v| v.as_u64())
             .unwrap_or(0);
+        self.budget_usd = cost_data.get("budget_usd").and_then(|v| v.as_f64());
 
         debug!(
             cost = format!("${:.6}", self.total_cost_usd),
@@ -601,5 +605,83 @@ mod tests {
         // Token counts should still be tracked
         assert_eq!(tracker.total_input_tokens, 100_000);
         assert_eq!(tracker.total_output_tokens, 50_000);
+    }
+
+    // ---------------------------------------------------------------
+    // Budget tests
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn test_no_budget_not_over() {
+        let tracker = CostTracker::new();
+        assert!(!tracker.is_over_budget());
+        assert_eq!(tracker.remaining_budget(), None);
+    }
+
+    #[test]
+    fn test_set_budget() {
+        let mut tracker = CostTracker::new();
+        tracker.set_budget(1.0);
+        assert_eq!(tracker.budget_usd, Some(1.0));
+        assert!(!tracker.is_over_budget());
+        assert!((tracker.remaining_budget().unwrap() - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_budget_not_exceeded() {
+        let mut tracker = CostTracker::new();
+        tracker.set_budget(1.0);
+        tracker.total_cost_usd = 0.5;
+        assert!(!tracker.is_over_budget());
+        assert!((tracker.remaining_budget().unwrap() - 0.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_budget_exactly_met() {
+        let mut tracker = CostTracker::new();
+        tracker.set_budget(1.0);
+        tracker.total_cost_usd = 1.0;
+        assert!(tracker.is_over_budget());
+        assert!((tracker.remaining_budget().unwrap()).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_budget_exceeded() {
+        let mut tracker = CostTracker::new();
+        tracker.set_budget(0.50);
+        tracker.total_cost_usd = 0.75;
+        assert!(tracker.is_over_budget());
+        assert_eq!(tracker.remaining_budget().unwrap(), 0.0);
+    }
+
+    #[test]
+    fn test_budget_exceeded_after_usage() {
+        let mut tracker = CostTracker::new();
+        tracker.set_budget(0.05);
+        let pricing = test_pricing();
+        // Record usage that exceeds the $0.05 budget
+        let usage = TokenUsage {
+            prompt_tokens: 10_000,
+            completion_tokens: 5_000,
+            ..Default::default()
+        };
+        tracker.record_usage(&usage, Some(&pricing));
+        // input: 10_000/1M * $3 = $0.03
+        // output: 5_000/1M * $15 = $0.075
+        // total: $0.105 > $0.05
+        assert!(tracker.is_over_budget());
+        assert_eq!(tracker.remaining_budget().unwrap(), 0.0);
+    }
+
+    #[test]
+    fn test_budget_serialization() {
+        let mut tracker = CostTracker::new();
+        tracker.set_budget(2.50);
+        tracker.total_cost_usd = 0.75;
+        let json = serde_json::to_string(&tracker).unwrap();
+        let restored: CostTracker = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.budget_usd, Some(2.50));
+        assert!(!restored.is_over_budget());
+        assert!((restored.remaining_budget().unwrap() - 1.75).abs() < 1e-9);
     }
 }
