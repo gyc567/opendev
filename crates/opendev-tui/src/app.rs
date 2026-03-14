@@ -957,14 +957,19 @@ impl App {
                 }
             } else if effective_collapsed && !tc.result_lines.is_empty() {
                 let count = tc.result_lines.len();
-                lines.push(Line::from(Span::styled(
+                let is_read = categorize_tool(&tc.name)
+                    == crate::formatters::tool_registry::ToolCategory::FileRead;
+                let label = if is_read {
+                    format!("  {}  ({count} lines)", CONTINUATION_CHAR)
+                } else {
                     format!(
                         "  {}  ({count} lines collapsed, press Ctrl+O to expand)",
-                        CONTINUATION_CHAR
-                    ),
-                    Style::default()
-                        .fg(style_tokens::SUBTLE)
-                        .add_modifier(Modifier::ITALIC),
+                        CONTINUATION_CHAR,
+                    )
+                };
+                lines.push(Line::from(Span::styled(
+                    label,
+                    Style::default().fg(style_tokens::SUBTLE),
                 )));
             }
 
@@ -1138,13 +1143,126 @@ impl App {
         frame.render_widget(status, chunks[4]);
     }
 
+    /// Shared helper that renders a popup panel matching the Python Textual style:
+    /// bright_cyan border, `▸` pointer, bold white active label, dim descriptions.
+    /// Padding (1, 2) = 1 empty line top/bottom, 2 spaces horizontal.
+    /// True cyan color for popup panel borders and accents.
+    const PANEL_CYAN: ratatui::style::Color = ratatui::style::Color::Rgb(0, 255, 255);
+
+    fn render_popup_panel(
+        frame: &mut ratatui::Frame,
+        input_area: layout::Rect,
+        title: &str,
+        content_lines: &[ratatui::text::Line<'_>],
+        option_lines: &[ratatui::text::Line<'_>],
+        hint: &str,
+        max_width: Option<u16>,
+    ) {
+        use crate::formatters::style_tokens;
+        use ratatui::style::{Modifier, Style};
+        use ratatui::text::{Line, Span};
+        use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
+
+        let mut lines: Vec<Line> = Vec::new();
+
+        // Top padding (1 empty line)
+        lines.push(Line::from(""));
+
+        // Content section
+        for line in content_lines {
+            lines.push(line.clone());
+        }
+
+        // Hint line
+        lines.push(Line::from(Span::styled(
+            format!("    {hint}"),
+            Style::default().fg(style_tokens::DIM_GREY),
+        )));
+
+        // Option lines
+        for line in option_lines {
+            lines.push(line.clone());
+        }
+
+        // Bottom padding (1 empty line)
+        lines.push(Line::from(""));
+
+        let panel_width = max_width
+            .map(|w| input_area.width.min(w))
+            .unwrap_or(input_area.width);
+        let panel_height = (lines.len() as u16 + 2).min(input_area.y);
+        let popup_area = layout::Rect {
+            x: input_area.x,
+            y: input_area.y.saturating_sub(panel_height),
+            width: panel_width,
+            height: panel_height,
+        };
+
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(Self::PANEL_CYAN))
+            .title(Span::styled(
+                title,
+                Style::default()
+                    .fg(Self::PANEL_CYAN)
+                    .add_modifier(Modifier::BOLD),
+            ));
+
+        let paragraph = Paragraph::new(lines).block(block);
+        frame.render_widget(ratatui::widgets::Clear, popup_area);
+        frame.render_widget(paragraph, popup_area);
+    }
+
+    /// Build a single option line matching the Python Textual style.
+    /// Active: `▸` bright_cyan pointer + dim number + bold white label + dim description.
+    /// Inactive: space pointer + dim number + white label + dim description.
+    fn build_option_line<'a>(
+        is_selected: bool,
+        number: &str,
+        label: &str,
+        description: &str,
+    ) -> ratatui::text::Line<'a> {
+        use crate::formatters::style_tokens;
+        use ratatui::style::{Modifier, Style};
+        use ratatui::text::{Line, Span};
+
+        let pointer = if is_selected { "\u{25b8}" } else { " " };
+        let pointer_style = if is_selected {
+            Style::default()
+                .fg(Self::PANEL_CYAN)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(style_tokens::DIM_GREY)
+        };
+        let num_style = Style::default().fg(style_tokens::DIM_GREY);
+        let label_style = if is_selected {
+            Style::default()
+                .fg(style_tokens::PRIMARY)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(style_tokens::PRIMARY)
+        };
+        let desc_style = Style::default().fg(style_tokens::DIM_GREY);
+
+        let mut spans = vec![
+            Span::styled(format!("    {pointer} "), pointer_style),
+            Span::styled(format!("{number} "), num_style),
+            Span::styled(label.to_string(), label_style),
+        ];
+        if !description.is_empty() {
+            spans.push(Span::styled(format!("  {description}"), desc_style));
+        }
+        Line::from(spans)
+    }
+
     /// Render autocomplete popup above the input area.
     fn render_autocomplete(&self, frame: &mut ratatui::Frame, input_area: layout::Rect) {
         use crate::autocomplete::CompletionKind;
         use crate::formatters::style_tokens;
-        use ratatui::style::{Modifier, Style};
+        use ratatui::style::{Color, Modifier, Style};
         use ratatui::text::{Line, Span};
-        use ratatui::widgets::{Block, Borders, Paragraph};
+        use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
 
         let items = self.state.autocomplete.items();
         let selected_idx = self.state.autocomplete.selected_index();
@@ -1169,6 +1287,9 @@ impl App {
             height: popup_height,
         };
 
+        // Python uses BLUE_BG_ACTIVE (#1f2d3a) as active row bg
+        let active_bg = Color::Rgb(31, 45, 58);
+
         let lines: Vec<Line> = items
             .iter()
             .take(max_show)
@@ -1178,36 +1299,48 @@ impl App {
                 let (left, right) =
                     crate::autocomplete::formatters::CompletionFormatter::format(item);
 
+                let pointer = if selected { "\u{25b8}" } else { "\u{2022}" };
+                let pointer_style = if selected {
+                    Style::default()
+                        .fg(Self::PANEL_CYAN)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(style_tokens::DIM_GREY)
+                };
                 let label_style = if selected {
                     Style::default()
-                        .fg(style_tokens::CODE_BG)
-                        .bg(style_tokens::CYAN)
+                        .fg(Self::PANEL_CYAN)
                         .add_modifier(Modifier::BOLD)
                 } else {
                     Style::default().fg(style_tokens::PRIMARY)
                 };
                 let desc_style = if selected {
-                    Style::default()
-                        .fg(style_tokens::CODE_BG)
-                        .bg(style_tokens::CYAN)
+                    Style::default().fg(style_tokens::GREY)
                 } else {
                     Style::default().fg(style_tokens::SUBTLE)
                 };
 
-                Line::from(vec![
-                    Span::styled(format!("  {left}"), label_style),
+                let line = Line::from(vec![
+                    Span::styled(format!(" {pointer} "), pointer_style),
+                    Span::styled(left, label_style),
                     Span::styled(format!(" {right}"), desc_style),
-                ])
+                ]);
+                if selected {
+                    line.style(Style::default().bg(active_bg))
+                } else {
+                    line
+                }
             })
             .collect();
 
         let block = Block::default()
             .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
             .border_style(Style::default().fg(style_tokens::BORDER))
             .title(Span::styled(
                 title,
                 Style::default()
-                    .fg(style_tokens::CYAN)
+                    .fg(Self::PANEL_CYAN)
                     .add_modifier(Modifier::BOLD),
             ));
 
@@ -1221,202 +1354,127 @@ impl App {
         use crate::formatters::style_tokens;
         use ratatui::style::{Modifier, Style};
         use ratatui::text::{Line, Span};
-        use ratatui::widgets::{Block, Borders, Paragraph};
 
-        let options = self.plan_approval_controller.options();
+        let plan_options = self.plan_approval_controller.options();
         let selected = self.plan_approval_controller.selected_action();
 
-        // Build lines: header hint + options
-        let mut lines = vec![Line::from(Span::styled(
-            " \u{2191}/\u{2193} choose \u{00b7} Enter confirm \u{00b7} Esc cancel",
-            Style::default().fg(style_tokens::SUBTLE),
-        ))];
-
-        for (i, opt) in options.iter().enumerate() {
-            let is_selected = i == selected;
-            let pointer = if is_selected { "\u{25b8}" } else { " " };
-            let label_style = if is_selected {
+        let content_lines = vec![Line::from(vec![
+            Span::styled("    Plan ", Style::default().fg(style_tokens::DIM_GREY)),
+            Span::styled("\u{00b7} ", Style::default().fg(style_tokens::DIM_GREY)),
+            Span::styled(
+                "Ready for review",
                 Style::default()
-                    .fg(style_tokens::CYAN)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(style_tokens::PRIMARY)
-            };
-            let desc_style = if is_selected {
-                Style::default()
-                    .fg(style_tokens::CODE_BG)
-                    .bg(style_tokens::CYAN)
-            } else {
-                Style::default().fg(style_tokens::SUBTLE)
-            };
-
-            lines.push(Line::from(vec![
-                Span::styled(format!("  {pointer} {}. {}", i + 1, opt.label), label_style),
-                Span::styled(format!("  {}", opt.description), desc_style),
-            ]));
-        }
-
-        // Panel height: 1 hint + options + 2 borders
-        let panel_height = (lines.len() as u16 + 2).min(input_area.y);
-        let popup_area = layout::Rect {
-            x: input_area.x,
-            y: input_area.y.saturating_sub(panel_height),
-            width: input_area.width,
-            height: panel_height,
-        };
-
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(style_tokens::CYAN))
-            .title(Span::styled(
-                " Plan \u{00b7} Ready for review ",
-                Style::default()
-                    .fg(style_tokens::CYAN)
+                    .fg(Self::PANEL_CYAN)
                     .add_modifier(Modifier::BOLD),
-            ));
+            ),
+        ])];
 
-        let paragraph = Paragraph::new(lines).block(block);
-        frame.render_widget(ratatui::widgets::Clear, popup_area);
-        frame.render_widget(paragraph, popup_area);
+        let option_lines: Vec<Line> = plan_options
+            .iter()
+            .enumerate()
+            .map(|(i, opt)| {
+                Self::build_option_line(
+                    i == selected,
+                    &format!("{}.", i + 1),
+                    &opt.label,
+                    &opt.description,
+                )
+            })
+            .collect();
+
+        Self::render_popup_panel(
+            frame,
+            input_area,
+            " Approval ",
+            &content_lines,
+            &option_lines,
+            "\u{2191}/\u{2193} choose \u{00b7} Enter confirm \u{00b7} Esc cancel",
+            None,
+        );
     }
 
-    /// Render the ask-user prompt panel (mirrors `render_plan_approval`).
+    /// Render the ask-user prompt panel.
     fn render_ask_user(&self, frame: &mut ratatui::Frame, input_area: layout::Rect) {
         use crate::formatters::style_tokens;
-        use ratatui::style::{Modifier, Style};
+        use ratatui::style::Style;
         use ratatui::text::{Line, Span};
-        use ratatui::widgets::{Block, Borders, Paragraph};
 
-        let options = self.ask_user_controller.options();
+        let ask_options = self.ask_user_controller.options();
         let selected = self.ask_user_controller.selected_index();
         let question = self.ask_user_controller.question();
 
-        let mut lines = vec![
-            Line::from(Span::styled(
-                format!("  {question}"),
-                Style::default().fg(style_tokens::PRIMARY),
-            )),
-            Line::from(Span::styled(
-                " \u{2191}/\u{2193} choose \u{00b7} Enter confirm \u{00b7} Esc cancel",
-                Style::default().fg(style_tokens::SUBTLE),
-            )),
-        ];
+        let content_lines = vec![Line::from(Span::styled(
+            format!("    {question}"),
+            Style::default().fg(style_tokens::PRIMARY),
+        ))];
 
-        for (i, opt) in options.iter().enumerate() {
-            let is_selected = i == selected;
-            let pointer = if is_selected { "\u{25b8}" } else { " " };
-            let label_style = if is_selected {
-                Style::default()
-                    .fg(style_tokens::CYAN)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(style_tokens::PRIMARY)
-            };
+        let option_lines: Vec<Line> = ask_options
+            .iter()
+            .enumerate()
+            .map(|(i, opt)| Self::build_option_line(i == selected, &format!("{}.", i + 1), opt, ""))
+            .collect();
 
-            lines.push(Line::from(Span::styled(
-                format!("  {pointer} {}. {opt}", i + 1),
-                label_style,
-            )));
-        }
-
-        let panel_height = (lines.len() as u16 + 2).min(input_area.y);
-        let popup_area = layout::Rect {
-            x: input_area.x,
-            y: input_area.y.saturating_sub(panel_height),
-            width: input_area.width,
-            height: panel_height,
-        };
-
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(style_tokens::CYAN))
-            .title(Span::styled(
-                " Question ",
-                Style::default()
-                    .fg(style_tokens::CYAN)
-                    .add_modifier(Modifier::BOLD),
-            ));
-
-        let paragraph = Paragraph::new(lines).block(block);
-        frame.render_widget(ratatui::widgets::Clear, popup_area);
-        frame.render_widget(paragraph, popup_area);
+        Self::render_popup_panel(
+            frame,
+            input_area,
+            " Question ",
+            &content_lines,
+            &option_lines,
+            "\u{2191}/\u{2193} choose \u{00b7} Enter confirm \u{00b7} Esc cancel",
+            None,
+        );
     }
 
-    /// Render the tool approval prompt panel (mirrors `render_plan_approval`).
+    /// Render the tool approval prompt panel.
     fn render_approval(&self, frame: &mut ratatui::Frame, input_area: layout::Rect) {
         use crate::formatters::style_tokens;
         use ratatui::style::{Modifier, Style};
         use ratatui::text::{Line, Span};
-        use ratatui::widgets::{Block, Borders, Paragraph};
 
-        let options = self.approval_controller.options();
+        let approval_options = self.approval_controller.options();
         let selected = self.approval_controller.selected_index();
         let command = self.approval_controller.command();
         let working_dir = self.approval_controller.working_dir();
 
-        let mut lines = vec![
+        let content_lines = vec![
+            Line::from(vec![
+                Span::styled("    Command ", Style::default().fg(style_tokens::DIM_GREY)),
+                Span::styled("\u{00b7} ", Style::default().fg(style_tokens::DIM_GREY)),
+                Span::styled(
+                    command.to_string(),
+                    Style::default()
+                        .fg(Self::PANEL_CYAN)
+                        .add_modifier(Modifier::BOLD),
+                ),
+            ]),
             Line::from(Span::styled(
-                format!("  {command}"),
-                Style::default().fg(style_tokens::CYAN),
-            )),
-            Line::from(Span::styled(
-                format!("  in {working_dir}"),
-                Style::default().fg(style_tokens::SUBTLE),
-            )),
-            Line::from(Span::styled(
-                " \u{2191}/\u{2193} choose \u{00b7} Enter confirm \u{00b7} Esc cancel",
-                Style::default().fg(style_tokens::SUBTLE),
+                format!("    Directory \u{00b7} {working_dir}"),
+                Style::default().fg(style_tokens::DIM_GREY),
             )),
         ];
 
-        for (i, opt) in options.iter().enumerate() {
-            let is_selected = i == selected;
-            let pointer = if is_selected { "\u{25b8}" } else { " " };
-            let label_style = if is_selected {
-                Style::default()
-                    .fg(style_tokens::CYAN)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(style_tokens::PRIMARY)
-            };
-            let desc_style = if is_selected {
-                Style::default()
-                    .fg(style_tokens::CODE_BG)
-                    .bg(style_tokens::CYAN)
-            } else {
-                Style::default().fg(style_tokens::SUBTLE)
-            };
+        let option_lines: Vec<Line> = approval_options
+            .iter()
+            .enumerate()
+            .map(|(i, opt)| {
+                Self::build_option_line(
+                    i == selected,
+                    &format!("{}.", opt.choice),
+                    &opt.label,
+                    &opt.description,
+                )
+            })
+            .collect();
 
-            lines.push(Line::from(vec![
-                Span::styled(
-                    format!("  {pointer} {}. {}", opt.choice, opt.label),
-                    label_style,
-                ),
-                Span::styled(format!("  {}", opt.description), desc_style),
-            ]));
-        }
-
-        let panel_height = (lines.len() as u16 + 2).min(input_area.y);
-        let popup_area = layout::Rect {
-            x: input_area.x,
-            y: input_area.y.saturating_sub(panel_height),
-            width: input_area.width,
-            height: panel_height,
-        };
-
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(style_tokens::CYAN))
-            .title(Span::styled(
-                " Approve Command ",
-                Style::default()
-                    .fg(style_tokens::CYAN)
-                    .add_modifier(Modifier::BOLD),
-            ));
-
-        let paragraph = Paragraph::new(lines).block(block);
-        frame.render_widget(ratatui::widgets::Clear, popup_area);
-        frame.render_widget(paragraph, popup_area);
+        Self::render_popup_panel(
+            frame,
+            input_area,
+            " Approval ",
+            &content_lines,
+            &option_lines,
+            "\u{2191}/\u{2193} choose \u{00b7} Enter confirm \u{00b7} Esc cancel",
+            None,
+        );
     }
 
     /// Drain the next pending message from the queue.
