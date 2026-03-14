@@ -14,7 +14,6 @@ use crate::formatters::style_tokens;
 pub struct InputWidget<'a> {
     buffer: &'a str,
     cursor: usize,
-    agent_active: bool,
     mode: &'a str,
     pending_count: usize,
 }
@@ -23,14 +22,12 @@ impl<'a> InputWidget<'a> {
     pub fn new(
         buffer: &'a str,
         cursor: usize,
-        agent_active: bool,
         mode: &'a str,
         pending_count: usize,
     ) -> Self {
         Self {
             buffer,
             cursor,
-            agent_active,
             mode,
             pending_count,
         }
@@ -49,17 +46,7 @@ impl Widget for InputWidget<'_> {
             style_tokens::ACCENT
         };
 
-        let placeholder = if self.pending_count > 0 {
-            format!(
-                "{} message{} queued (ESC to cancel)",
-                self.pending_count,
-                if self.pending_count == 1 { "" } else { "s" }
-            )
-        } else if self.agent_active {
-            "Agent is thinking... (ESC to interrupt)".to_owned()
-        } else {
-            "Type a message...".to_owned()
-        };
+        let placeholder = "Type a message...";
 
         // Row 0: separator line with embedded mode indicator
         // e.g. "── Normal (Shift+Tab) ──────────"
@@ -71,19 +58,39 @@ impl Widget for InputWidget<'_> {
         let mode_text = format!(" {mode_label} ");
         let hint_text = "(Shift+Tab) ";
         let prefix_dashes = 2; // "── " before mode label
-        let used = prefix_dashes + mode_text.len() + hint_text.len();
+
+        let queue_text = if self.pending_count > 0 {
+            format!(
+                "── {} message{} queued (ESC) ",
+                self.pending_count,
+                if self.pending_count == 1 { "" } else { "s" }
+            )
+        } else {
+            String::new()
+        };
+
+        let used = prefix_dashes + mode_text.len() + hint_text.len() + queue_text.len();
         let remaining_dashes = (area.width as usize).saturating_sub(used);
 
         let sep_style = Style::default().fg(accent);
-        let sep_line = Line::from(vec![
+        let mut spans = vec![
             Span::styled("── ", sep_style),
             Span::styled(
                 mode_text,
                 Style::default().fg(accent).add_modifier(Modifier::BOLD),
             ),
             Span::styled(hint_text, Style::default().fg(style_tokens::GREY)),
-            Span::styled("─".repeat(remaining_dashes), sep_style),
-        ]);
+        ];
+        if !queue_text.is_empty() {
+            spans.push(Span::styled(
+                queue_text,
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ));
+        }
+        spans.push(Span::styled("─".repeat(remaining_dashes), sep_style));
+        let sep_line = Line::from(spans);
         buf.set_line(area.left(), area.top(), &sep_line, area.width);
 
         // Rows below separator: multiline input
@@ -174,38 +181,32 @@ mod tests {
 
     #[test]
     fn test_input_widget_creation() {
-        let _widget = InputWidget::new("hello", 3, false, "NORMAL", 0);
+        let _widget = InputWidget::new("hello", 3, "NORMAL", 0);
     }
 
     #[test]
     fn test_input_widget_empty() {
-        let _widget = InputWidget::new("", 0, false, "NORMAL", 0);
+        let _widget = InputWidget::new("", 0, "NORMAL", 0);
     }
 
     #[test]
-    fn test_input_widget_agent_active() {
-        let _widget = InputWidget::new("", 0, true, "NORMAL", 0);
-    }
-
-    #[test]
-    fn test_queue_indicator_placeholder() {
-        // Verify the widget renders queue count in placeholder
+    fn test_queue_indicator_in_separator() {
+        // Verify the widget renders queue count in the separator line (row 0)
         let area = Rect::new(0, 0, 60, 3);
         let mut buf = Buffer::empty(area);
 
-        let widget = InputWidget::new("", 0, true, "NORMAL", 2);
+        let widget = InputWidget::new("", 0, "NORMAL", 2);
         widget.render(area, &mut buf);
 
-        // Check that "2 messages queued" appears in the rendered buffer
         let rendered: String = (0..area.width)
             .map(|x| {
-                buf.cell((x, 1))
+                buf.cell((x, 0))
                     .map_or(' ', |c| c.symbol().chars().next().unwrap_or(' '))
             })
             .collect();
         assert!(
             rendered.contains("2 messages queued"),
-            "Expected '2 messages queued' in rendered output, got: {rendered:?}"
+            "Expected '2 messages queued' in separator line, got: {rendered:?}"
         );
     }
 
@@ -214,20 +215,19 @@ mod tests {
         let area = Rect::new(0, 0, 60, 3);
         let mut buf = Buffer::empty(area);
 
-        let widget = InputWidget::new("", 0, true, "NORMAL", 1);
+        let widget = InputWidget::new("", 0, "NORMAL", 1);
         widget.render(area, &mut buf);
 
         let rendered: String = (0..area.width)
             .map(|x| {
-                buf.cell((x, 1))
+                buf.cell((x, 0))
                     .map_or(' ', |c| c.symbol().chars().next().unwrap_or(' '))
             })
             .collect();
         assert!(
             rendered.contains("1 message queued"),
-            "Expected '1 message queued' in rendered output, got: {rendered:?}"
+            "Expected '1 message queued' in separator line, got: {rendered:?}"
         );
-        // Should NOT say "messages" (plural)
         assert!(
             !rendered.contains("1 messages"),
             "Should use singular 'message' for count=1"

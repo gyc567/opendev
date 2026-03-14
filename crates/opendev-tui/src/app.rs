@@ -958,7 +958,6 @@ impl App {
         let input = InputWidget::new(
             &self.state.input_buffer,
             self.state.input_cursor,
-            self.state.agent_active,
             mode_str,
             self.state.pending_messages.len(),
         );
