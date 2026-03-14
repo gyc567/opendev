@@ -12,7 +12,7 @@ use tokio::sync::mpsc;
 use opendev_models::message::ChatMessage;
 
 /// Application-level events consumed by the main event loop.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 #[allow(clippy::large_enum_variant)]
 pub enum AppEvent {
     /// Raw terminal event from crossterm.
@@ -108,6 +108,14 @@ pub enum AppEvent {
     // -- Context events --
     /// Context window usage percentage updated (0.0–100.0).
     ContextUsage(f64),
+
+    // -- Plan events --
+    /// Plan approval request arrived from the PresentPlanTool.
+    /// Contains the plan content to display and the oneshot sender for the decision.
+    PlanApprovalRequested {
+        plan_content: String,
+        response_tx: tokio::sync::oneshot::Sender<opendev_runtime::PlanDecision>,
+    },
 
     // -- UI events --
     /// User submitted a message.
@@ -348,6 +356,10 @@ impl RecordedEvent {
             AppEvent::ContextUsage(pct) => {
                 ("ContextUsage".to_string(), serde_json::json!({"pct": pct}))
             }
+            AppEvent::PlanApprovalRequested { plan_content, .. } => (
+                "PlanApprovalRequested".to_string(),
+                serde_json::json!({"plan_content": plan_content}),
+            ),
             AppEvent::UserSubmit(s) => {
                 ("UserSubmit".to_string(), serde_json::json!({"message": s}))
             }
@@ -508,6 +520,8 @@ impl RecordedEvent {
                 let pct = self.payload.get("pct")?.as_f64()?;
                 Some(AppEvent::ContextUsage(pct))
             }
+            // PlanApprovalRequested cannot be reconstructed (contains oneshot sender)
+            "PlanApprovalRequested" => None,
             "UserSubmit" => {
                 let message = self.payload.get("message")?.as_str()?.to_string();
                 Some(AppEvent::UserSubmit(message))

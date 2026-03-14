@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use opendev_runtime::{PlanIndex, TodoManager, parse_plan_steps};
+use opendev_runtime::{PlanApprovalRequest, PlanApprovalSender, PlanIndex, TodoManager, parse_plan_steps};
 use opendev_tools_core::{BaseTool, ToolContext, ToolResult};
 
 /// Minimum plan length in characters to be considered valid.
@@ -24,12 +24,19 @@ const MIN_PLAN_LENGTH: usize = 100;
 pub struct PresentPlanTool {
     /// Shared todo manager — steps are created here on approval.
     todo_manager: Option<Arc<Mutex<TodoManager>>>,
+    /// Channel to send plan approval requests to the TUI.
+    /// When `Some`, the tool blocks until the user approves/rejects.
+    /// When `None` (headless/non-interactive), auto-approve.
+    approval_tx: Option<PlanApprovalSender>,
 }
 
 impl PresentPlanTool {
     /// Create a present_plan tool without todo integration (auto-approve only).
     pub fn new() -> Self {
-        Self { todo_manager: None }
+        Self {
+            todo_manager: None,
+            approval_tx: None,
+        }
     }
 
     /// Create a present_plan tool with a shared todo manager.
@@ -39,7 +46,17 @@ impl PresentPlanTool {
     pub fn with_todo_manager(manager: Arc<Mutex<TodoManager>>) -> Self {
         Self {
             todo_manager: Some(manager),
+            approval_tx: None,
         }
+    }
+
+    /// Attach a plan approval channel for interactive (TUI) mode.
+    ///
+    /// When set, `execute()` sends the plan content through this channel
+    /// and blocks until the user approves, rejects, or requests modification.
+    pub fn with_approval_tx(mut self, tx: PlanApprovalSender) -> Self {
+        self.approval_tx = Some(tx);
+        self
     }
 
     /// Plans directory: `~/.opendev/plans/`.
@@ -208,6 +225,72 @@ impl BaseTool for PresentPlanTool {
             };
         }
 
+        // --- Interactive approval: block until user decides ---
+        let auto_approve_mode;
+        if let Some(ref tx) = self.approval_tx {
+            let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
+            if tx
+                .send(PlanApprovalRequest {
+                    plan_content: plan_content.clone(),
+                    response_tx: resp_tx,
+                })
+                .is_err()
+            {
+                // TUI closed — fall through to auto-approve
+                auto_approve_mode = true;
+            } else {
+                match resp_rx.await {
+                    Ok(decision) => match decision.action.as_str() {
+                        "approve_auto" => {
+                            auto_approve_mode = true;
+                        }
+                        "approve" => {
+                            auto_approve_mode = false;
+                        }
+                        _ => {
+                            // "modify" — user wants revisions
+                            let mut metadata = HashMap::new();
+                            metadata
+                                .insert("plan_approved".into(), serde_json::json!(false));
+                            metadata.insert(
+                                "requires_modification".into(),
+                                serde_json::json!(true),
+                            );
+                            metadata.insert(
+                                "plan_file_path".into(),
+                                serde_json::json!(plan_file_path),
+                            );
+                            if !decision.feedback.is_empty() {
+                                metadata.insert(
+                                    "feedback".into(),
+                                    serde_json::json!(decision.feedback),
+                                );
+                            }
+                            return ToolResult {
+                                success: false,
+                                output: Some(
+                                    "User requested plan revision. Re-spawn the Planner \
+                                     subagent to revise the plan."
+                                        .into(),
+                                ),
+                                error: None,
+                                metadata,
+                                duration_ms: None,
+                                llm_suffix: None,
+                            };
+                        }
+                    },
+                    Err(_) => {
+                        // Channel dropped — fall through to auto-approve
+                        auto_approve_mode = true;
+                    }
+                }
+            }
+        } else {
+            // Headless / non-interactive — auto-approve
+            auto_approve_mode = true;
+        }
+
         // Parse implementation steps into todos
         let steps = parse_plan_steps(&plan_content);
         let step_count = steps.len();
@@ -250,6 +333,7 @@ impl BaseTool for PresentPlanTool {
         // Build metadata
         let mut metadata = HashMap::new();
         metadata.insert("plan_approved".into(), serde_json::json!(true));
+        metadata.insert("auto_approve".into(), serde_json::json!(auto_approve_mode));
         metadata.insert("plan_file_path".into(), serde_json::json!(plan_file_path));
         metadata.insert("plan_length".into(), serde_json::json!(plan_content.len()));
         metadata.insert("step_count".into(), serde_json::json!(step_count));

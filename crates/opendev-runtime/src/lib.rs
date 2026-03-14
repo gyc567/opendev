@@ -24,6 +24,7 @@ pub mod gitignore;
 pub mod interrupt;
 pub mod lazy_init;
 pub mod permissions;
+pub mod plan_approval;
 pub mod plan_index;
 pub mod plan_names;
 pub mod sandbox;
@@ -61,6 +62,10 @@ pub use lazy_init::{
     LazyEmbeddings, LazyLsp, LazyMcp, LazySubsystem, SyncLazy, create_lazy_subsystems,
 };
 pub use permissions::{PermissionAction, PermissionRule, PermissionRuleSet};
+pub use plan_approval::{
+    PlanApprovalReceiver, PlanApprovalRequest, PlanApprovalSender, PlanDecision,
+    plan_approval_channel,
+};
 pub use sandbox::SandboxConfig;
 pub use secrets::{SecretKind, SecretMatch, detect_secrets, redact_secrets};
 pub use snapshot::SnapshotManager;

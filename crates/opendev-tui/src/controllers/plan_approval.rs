@@ -8,6 +8,9 @@
 
 use tokio::sync::oneshot;
 
+// Re-export PlanDecision from opendev-runtime (shared with opendev-tools-impl).
+pub use opendev_runtime::PlanDecision;
+
 /// Status of a plan under review.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PlanStatus {
@@ -15,15 +18,6 @@ pub enum PlanStatus {
     Approved,
     Rejected,
     Modified,
-}
-
-/// The user's decision on a plan.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PlanDecision {
-    /// The action chosen: "approve_auto", "approve", or "modify".
-    pub action: String,
-    /// Optional feedback text (empty unless modified).
-    pub feedback: String,
 }
 
 /// A single action option in the plan approval prompt.
