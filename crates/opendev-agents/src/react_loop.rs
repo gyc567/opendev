@@ -337,7 +337,8 @@ impl ReactLoop {
 
         let args: Value = serde_json::from_str(args_str).unwrap_or_default();
         let summary = args
-            .get("summary")
+            .get("result")
+            .or_else(|| args.get("summary"))
             .and_then(|s| s.as_str())
             .unwrap_or("Task completed")
             .to_string();
@@ -1745,7 +1746,7 @@ mod tests {
         let tc = serde_json::json!({
             "function": {
                 "name": "task_complete",
-                "arguments": "{\"summary\": \"All done\", \"status\": \"success\"}"
+                "arguments": "{\"result\": \"All done\", \"status\": \"success\"}"
             }
         });
         let (summary, status) = ReactLoop::extract_task_complete_args(&tc);

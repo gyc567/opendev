@@ -27,16 +27,16 @@ impl BaseTool for TaskCompleteTool {
     fn description(&self) -> &str {
         "Call this tool when you have completed the user's request. \
          You MUST call this tool to end the conversation. \
-         Provide a summary of what was accomplished."
+         Provide your response to the user in the result parameter."
     }
 
     fn parameter_schema(&self) -> serde_json::Value {
         serde_json::json!({
             "type": "object",
             "properties": {
-                "summary": {
+                "result": {
                     "type": "string",
-                    "description": "Summary of what was accomplished (required)"
+                    "description": "Your response to the user — what was accomplished or your conversational reply"
                 },
                 "status": {
                     "type": "string",
@@ -45,7 +45,7 @@ impl BaseTool for TaskCompleteTool {
                     "default": "success"
                 }
             },
-            "required": ["summary"]
+            "required": ["result"]
         })
     }
 
@@ -54,9 +54,13 @@ impl BaseTool for TaskCompleteTool {
         args: HashMap<String, serde_json::Value>,
         _ctx: &ToolContext,
     ) -> ToolResult {
-        let summary = match args.get("summary").and_then(|v| v.as_str()) {
+        let summary = match args
+            .get("result")
+            .or_else(|| args.get("summary"))
+            .and_then(|v| v.as_str())
+        {
             Some(s) if !s.trim().is_empty() => s.trim(),
-            _ => return ToolResult::fail("Summary is required for task_complete"),
+            _ => return ToolResult::fail("Result is required for task_complete"),
         };
 
         let status = args
@@ -98,7 +102,7 @@ mod tests {
         let tool = TaskCompleteTool;
         let ctx = ToolContext::new("/tmp");
         let args = make_args(&[(
-            "summary",
+            "result",
             serde_json::json!("Implemented the feature and added tests"),
         )]);
         let result = tool.execute(args, &ctx).await;
@@ -121,7 +125,7 @@ mod tests {
         let tool = TaskCompleteTool;
         let ctx = ToolContext::new("/tmp");
         let args = make_args(&[
-            ("summary", serde_json::json!("Completed 3 of 5 items")),
+            ("result", serde_json::json!("Completed 3 of 5 items")),
             ("status", serde_json::json!("partial")),
         ]);
         let result = tool.execute(args, &ctx).await;
@@ -134,7 +138,7 @@ mod tests {
         let tool = TaskCompleteTool;
         let ctx = ToolContext::new("/tmp");
         let args = make_args(&[
-            ("summary", serde_json::json!("Could not resolve the issue")),
+            ("result", serde_json::json!("Could not resolve the issue")),
             ("status", serde_json::json!("failed")),
         ]);
         let result = tool.execute(args, &ctx).await;
@@ -143,22 +147,22 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_task_complete_missing_summary() {
+    async fn test_task_complete_missing_result() {
         let tool = TaskCompleteTool;
         let ctx = ToolContext::new("/tmp");
         let result = tool.execute(HashMap::new(), &ctx).await;
         assert!(!result.success);
-        assert!(result.error.unwrap().contains("Summary is required"));
+        assert!(result.error.unwrap().contains("Result is required"));
     }
 
     #[tokio::test]
-    async fn test_task_complete_empty_summary() {
+    async fn test_task_complete_empty_result() {
         let tool = TaskCompleteTool;
         let ctx = ToolContext::new("/tmp");
-        let args = make_args(&[("summary", serde_json::json!("   "))]);
+        let args = make_args(&[("result", serde_json::json!("   "))]);
         let result = tool.execute(args, &ctx).await;
         assert!(!result.success);
-        assert!(result.error.unwrap().contains("Summary is required"));
+        assert!(result.error.unwrap().contains("Result is required"));
     }
 
     #[tokio::test]
@@ -166,7 +170,7 @@ mod tests {
         let tool = TaskCompleteTool;
         let ctx = ToolContext::new("/tmp");
         let args = make_args(&[
-            ("summary", serde_json::json!("Done")),
+            ("result", serde_json::json!("Done")),
             ("status", serde_json::json!("cancelled")),
         ]);
         let result = tool.execute(args, &ctx).await;
@@ -178,7 +182,7 @@ mod tests {
     async fn test_task_complete_default_status() {
         let tool = TaskCompleteTool;
         let ctx = ToolContext::new("/tmp");
-        let args = make_args(&[("summary", serde_json::json!("All done"))]);
+        let args = make_args(&[("result", serde_json::json!("All done"))]);
         let result = tool.execute(args, &ctx).await;
         assert!(result.success);
         assert_eq!(
@@ -188,15 +192,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_task_complete_trims_summary() {
+    async fn test_task_complete_trims_result() {
         let tool = TaskCompleteTool;
         let ctx = ToolContext::new("/tmp");
-        let args = make_args(&[("summary", serde_json::json!("  Trimmed summary  "))]);
+        let args = make_args(&[("result", serde_json::json!("  Trimmed result  "))]);
         let result = tool.execute(args, &ctx).await;
         assert!(result.success);
         assert_eq!(
             result.metadata.get("summary"),
-            Some(&serde_json::json!("Trimmed summary"))
+            Some(&serde_json::json!("Trimmed result"))
         );
     }
 }
