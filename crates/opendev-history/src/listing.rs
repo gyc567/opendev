@@ -102,6 +102,17 @@ impl SessionListing {
         Ok(())
     }
 
+    /// List sessions across all project workspaces, merged and sorted by recency.
+    pub fn list_all_sessions(projects_dir: &Path) -> Vec<SessionMetadata> {
+        let mut all = Vec::new();
+        for workspace in Self::list_user_workspaces(projects_dir) {
+            let listing = SessionListing::new(projects_dir.join(&workspace));
+            all.extend(listing.list_sessions(None, false));
+        }
+        all.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        all
+    }
+
     /// List all workspaces that have OpenDev sessions.
     pub fn list_user_workspaces(projects_dir: &Path) -> Vec<String> {
         if !projects_dir.exists() {

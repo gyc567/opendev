@@ -7,6 +7,8 @@ use std::path::{Path, PathBuf};
 
 use tracing::{debug, info, warn};
 
+use opendev_models::message::ChatMessage;
+use opendev_models::validator::{filter_and_repair_messages, validate_message};
 use opendev_models::{Role, Session};
 
 use crate::index::SessionIndex;
@@ -64,11 +66,29 @@ impl SessionManager {
             .expect("current_session was just set to Some")
     }
 
+    /// Add a validated message to the current session.
+    ///
+    /// Returns `true` if the message was accepted, `false` if rejected.
+    pub fn add_message(&mut self, msg: ChatMessage) -> bool {
+        let verdict = validate_message(&msg);
+        if !verdict.is_valid {
+            warn!("Rejected message: {}", verdict.reason);
+            return false;
+        }
+        if let Some(session) = &mut self.current_session {
+            session.messages.push(msg);
+            session.updated_at = chrono::Utc::now();
+            return true;
+        }
+        false
+    }
+
     /// Save a session to disk.
     ///
     /// Writes session metadata to `{id}.json` and messages to `{id}.jsonl`.
     /// If the session has no title in its metadata, one is auto-generated
     /// from the first user message.
+    /// Messages are validated and repaired before writing.
     pub fn save_session(&self, session: &Session) -> std::io::Result<()> {
         let json_path = self.session_dir.join(format!("{}.json", session.id));
         let jsonl_path = self.session_dir.join(format!("{}.jsonl", session.id));
@@ -94,9 +114,19 @@ impl SessionManager {
         std::fs::write(&tmp_json, &json_content)?;
         std::fs::rename(&tmp_json, &json_path)?;
 
-        // Write messages as JSONL
+        // Validate and repair messages before writing
+        let mut valid_messages = session.messages.clone();
+        let (dropped, repaired) = filter_and_repair_messages(&mut valid_messages);
+        if dropped > 0 || repaired > 0 {
+            info!(
+                "Session {}: dropped {} messages, repaired {}",
+                session.id, dropped, repaired
+            );
+        }
+
+        // Write validated messages as JSONL
         let mut jsonl_content = String::new();
-        for msg in &session.messages {
+        for msg in &valid_messages {
             let line = serde_json::to_string(msg).map_err(std::io::Error::other)?;
             jsonl_content.push_str(&line);
             jsonl_content.push('\n');
@@ -112,9 +142,10 @@ impl SessionManager {
         }
 
         debug!(
-            "Saved session {} ({} messages)",
+            "Saved session {} ({} messages, {} written after validation)",
             session.id,
-            session.messages.len()
+            session.messages.len(),
+            valid_messages.len()
         );
         Ok(())
     }
@@ -160,6 +191,13 @@ impl SessionManager {
                 }
             }
             if !messages.is_empty() {
+                let (dropped, repaired) = filter_and_repair_messages(&mut messages);
+                if dropped > 0 || repaired > 0 {
+                    info!(
+                        "Loaded session: repaired {} messages, dropped {}",
+                        repaired, dropped
+                    );
+                }
                 session.messages = messages;
             }
         }

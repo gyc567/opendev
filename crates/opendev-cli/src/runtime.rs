@@ -9,7 +9,6 @@ use std::sync::{Arc, Mutex};
 
 use chrono::Utc;
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValue};
-use serde_json::Value;
 use tracing::{debug, info, warn};
 
 use opendev_agents::llm_calls::{LlmCallConfig, LlmCaller};
@@ -162,6 +161,15 @@ impl AgentRuntime {
     ) -> Result<Self, String> {
         let mut tool_registry = ToolRegistry::new();
         let todo_manager = register_default_tools(&mut tool_registry);
+
+        // Register invoke_skill tool with project-local and user-global skill dirs
+        let mut skill_dirs = Vec::new();
+        skill_dirs.push(working_dir.join(".opendev").join("skills"));
+        if let Some(home) = dirs_next::home_dir() {
+            skill_dirs.push(home.join(".opendev").join("skills"));
+        }
+        let skill_loader = Arc::new(Mutex::new(opendev_agents::SkillLoader::new(skill_dirs)));
+        tool_registry.register(Arc::new(InvokeSkillTool::new(skill_loader)));
         info!(
             tool_count = tool_registry.tool_names().len(),
             "Registered default tools"

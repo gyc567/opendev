@@ -758,11 +758,9 @@ async fn run_interactive(
             }
             None => {
                 // Interactive session picker — list across all projects
-                let paths_for_listing =
-                    opendev_config::Paths::new(Some(working_dir.to_path_buf()));
-                let sessions = SessionListing::list_all_sessions(
-                    &paths_for_listing.global_projects_dir(),
-                );
+                let paths_for_listing = opendev_config::Paths::new(Some(working_dir.to_path_buf()));
+                let sessions =
+                    SessionListing::list_all_sessions(&paths_for_listing.global_projects_dir());
 
                 if sessions.is_empty() {
                     session_manager.create_session();
@@ -813,9 +811,7 @@ async fn run_interactive(
                             } else if let Ok(n) = input.parse::<usize>() {
                                 if n >= 1 && n <= sessions.len() {
                                     let selected = &sessions[n - 1];
-                                    if let Err(e) =
-                                        session_manager.resume_session(&selected.id)
-                                    {
+                                    if let Err(e) = session_manager.resume_session(&selected.id) {
                                         eprintln!("Failed to load session: {e}");
                                         session_manager.create_session();
                                     }
@@ -878,7 +874,7 @@ async fn run_interactive(
         for msg in &session.messages {
             match msg.role {
                 opendev_models::Role::User => {
-                    if msg.metadata.get("display_hidden").is_some() {
+                    if msg.metadata.contains_key("display_hidden") {
                         continue;
                     }
                     app_state.messages.push(opendev_tui::app::DisplayMessage {
@@ -994,6 +990,23 @@ async fn run_replay(path: &std::path::Path) {
             eprintln!("Error reading replay file: {e}");
             std::process::exit(1);
         }
+    }
+}
+
+/// Format a timestamp as a relative time string (e.g., "just now", "5m ago").
+fn format_relative_time(dt: chrono::DateTime<chrono::Utc>) -> String {
+    let now = chrono::Utc::now();
+    let diff = now.signed_duration_since(dt);
+    let secs = diff.num_seconds();
+
+    if secs < 60 {
+        "just now".to_string()
+    } else if secs < 3600 {
+        format!("{}m ago", secs / 60)
+    } else if secs < 86400 {
+        format!("{}h ago", secs / 3600)
+    } else {
+        format!("{}d ago", secs / 86400)
     }
 }
 
