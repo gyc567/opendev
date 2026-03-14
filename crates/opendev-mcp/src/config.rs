@@ -31,6 +31,20 @@ impl std::fmt::Display for TransportType {
     }
 }
 
+/// OAuth 2.0 configuration for MCP server authentication.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct McpOAuthConfig {
+    /// OAuth client ID.
+    pub client_id: String,
+    /// OAuth client secret.
+    pub client_secret: String,
+    /// Token endpoint URL.
+    pub token_url: String,
+    /// OAuth scope (space-separated).
+    #[serde(default)]
+    pub scope: Option<String>,
+}
+
 /// Configuration for a single MCP server.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McpServerConfig {
@@ -65,6 +79,10 @@ pub struct McpServerConfig {
     /// Transport type.
     #[serde(default)]
     pub transport: TransportType,
+
+    /// Optional OAuth 2.0 configuration for server authentication.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub oauth: Option<McpOAuthConfig>,
 }
 
 fn default_true() -> bool {
@@ -82,6 +100,7 @@ impl Default for McpServerConfig {
             enabled: true,
             auto_start: true,
             transport: TransportType::Stdio,
+            oauth: None,
         }
     }
 }
@@ -189,6 +208,12 @@ pub fn prepare_server_config(config: &McpServerConfig) -> McpServerConfig {
         enabled: config.enabled,
         auto_start: config.auto_start,
         transport: config.transport.clone(),
+        oauth: config.oauth.as_ref().map(|o| McpOAuthConfig {
+            client_id: expand_env_vars(&o.client_id),
+            client_secret: expand_env_vars(&o.client_secret),
+            token_url: expand_env_vars(&o.token_url),
+            scope: o.scope.as_ref().map(|s| expand_env_vars(s)),
+        }),
     }
 }
 
@@ -333,6 +358,59 @@ mod tests {
         assert_eq!(TransportType::Stdio.to_string(), "stdio");
         assert_eq!(TransportType::Sse.to_string(), "sse");
         assert_eq!(TransportType::Http.to_string(), "http");
+    }
+
+    #[test]
+    fn test_oauth_config_deserialization() {
+        let json = r#"{
+            "mcpServers": {
+                "auth-server": {
+                    "command": "node",
+                    "args": ["server.js"],
+                    "transport": "http",
+                    "url": "https://mcp.example.com",
+                    "oauth": {
+                        "client_id": "my-client",
+                        "client_secret": "my-secret",
+                        "token_url": "https://auth.example.com/token",
+                        "scope": "mcp:read mcp:write"
+                    }
+                }
+            }
+        }"#;
+        let config: McpConfig = serde_json::from_str(json).unwrap();
+        let server = &config.mcp_servers["auth-server"];
+        let oauth = server.oauth.as_ref().unwrap();
+        assert_eq!(oauth.client_id, "my-client");
+        assert_eq!(oauth.client_secret, "my-secret");
+        assert_eq!(oauth.token_url, "https://auth.example.com/token");
+        assert_eq!(oauth.scope.as_deref(), Some("mcp:read mcp:write"));
+    }
+
+    #[test]
+    fn test_oauth_config_none_by_default() {
+        let config = McpServerConfig::default();
+        assert!(config.oauth.is_none());
+    }
+
+    #[test]
+    fn test_prepare_expands_oauth_env_vars() {
+        // SAFETY: test-only; not run concurrently with env-dependent code.
+        unsafe { std::env::set_var("MCP_OAUTH_SECRET", "expanded_secret") };
+        let config = McpServerConfig {
+            oauth: Some(McpOAuthConfig {
+                client_id: "client".to_string(),
+                client_secret: "${MCP_OAUTH_SECRET}".to_string(),
+                token_url: "https://auth.example.com/token".to_string(),
+                scope: Some("read".to_string()),
+            }),
+            ..Default::default()
+        };
+        let prepared = prepare_server_config(&config);
+        let oauth = prepared.oauth.unwrap();
+        assert_eq!(oauth.client_secret, "expanded_secret");
+        // SAFETY: test-only cleanup.
+        unsafe { std::env::remove_var("MCP_OAUTH_SECRET") };
     }
 
     #[test]

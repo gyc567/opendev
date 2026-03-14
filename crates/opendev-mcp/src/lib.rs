@@ -17,7 +17,7 @@ pub mod manager;
 pub mod models;
 pub mod transport;
 
-pub use config::{McpConfig, McpServerConfig, TransportType};
+pub use config::{McpConfig, McpOAuthConfig, McpServerConfig, TransportType};
 pub use error::{McpError, McpResult};
 pub use manager::McpManager;
 pub use models::{
