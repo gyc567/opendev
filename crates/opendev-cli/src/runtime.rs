@@ -14,7 +14,7 @@ use tracing::{debug, info, warn};
 use opendev_agents::llm_calls::{LlmCallConfig, LlmCaller};
 use opendev_agents::prompts::{create_default_composer, create_thinking_composer};
 use opendev_agents::react_loop::{ReactLoop, ReactLoopConfig};
-use opendev_agents::traits::{AgentError, AgentEventCallback, AgentResult, TaskMonitor};
+use opendev_agents::traits::{AgentError, AgentEventCallback, AgentResult};
 use opendev_context::{ArtifactIndex, ContextCompactor};
 use opendev_history::SessionManager;
 use opendev_http::HttpClient;
@@ -64,7 +64,12 @@ pub struct AgentRuntime {
 /// Register all built-in tools into the registry.
 fn register_default_tools(registry: &mut ToolRegistry) -> Arc<Mutex<opendev_runtime::TodoManager>> {
     // Process execution
-    registry.register(Arc::new(BashTool::new()));
+    let bash_tool = BashTool::new();
+    let bg_store = bash_tool.background_store();
+    registry.register(Arc::new(bash_tool));
+    registry.register(Arc::new(ListProcessesTool::new(Arc::clone(&bg_store))));
+    registry.register(Arc::new(GetProcessOutputTool::new(Arc::clone(&bg_store))));
+    registry.register(Arc::new(KillProcessTool::new(bg_store)));
 
     // File operations
     registry.register(Arc::new(FileReadTool));
@@ -392,6 +397,7 @@ impl AgentRuntime {
         query: &str,
         system_prompt: &str,
         event_callback: Option<&dyn AgentEventCallback>,
+        interrupt_token: Option<&opendev_runtime::InterruptToken>,
     ) -> Result<AgentResult, AgentError> {
         info!(
             query_len = query.len(),
@@ -449,6 +455,7 @@ impl AgentRuntime {
             session_id: self.session_manager.current_session().map(|s| s.id.clone()),
             values: HashMap::new(),
             timeout_config: None,
+            cancel_token: interrupt_token.map(|t| t.child_token()),
         };
 
         // Step 6: Set thinking context for this query
@@ -466,6 +473,8 @@ impl AgentRuntime {
 
         // Step 7: Run the ReAct loop
         let pre_count = messages.len();
+        // Use interrupt_token as both TaskMonitor and CancellationToken source
+        let cancel_token = interrupt_token.map(|t| t.child_token());
         let result = self
             .react_loop
             .run(
@@ -475,12 +484,13 @@ impl AgentRuntime {
                 &tool_schemas,
                 &self.tool_registry,
                 &tool_context,
-                None::<&dyn TaskMonitor>,
+                interrupt_token,
                 event_callback,
                 Some(&self.cost_tracker),
                 Some(&self.artifact_index),
                 Some(&self.compactor),
                 Some(&self.todo_manager),
+                cancel_token.as_ref(),
             )
             .await?;
 
