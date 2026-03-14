@@ -15,9 +15,11 @@ use crate::doom_loop::{DoomLoopAction, DoomLoopDetector, RecoveryAction};
 use crate::llm_calls::LlmCaller;
 use crate::response::ResponseCleaner;
 use crate::traits::{AgentError, AgentResult, LlmResponse, TaskMonitor};
-use opendev_http::adapted_client::AdaptedClient;
 use opendev_context::{ArtifactIndex, ContextCompactor, OptimizationLevel};
-use opendev_runtime::{CostTracker, TokenUsage, play_finish_sound, ThinkingLevel, summarize_tool_result};
+use opendev_http::adapted_client::AdaptedClient;
+use opendev_runtime::{
+    CostTracker, ThinkingLevel, TokenUsage, play_finish_sound, summarize_tool_result,
+};
 use opendev_tools_core::{ToolContext, ToolRegistry, ToolResult};
 
 /// Metrics for a single tool call execution.
