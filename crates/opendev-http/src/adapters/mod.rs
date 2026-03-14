@@ -13,8 +13,10 @@ pub mod groq;
 pub mod mistral;
 pub mod ollama;
 pub mod openai;
+pub mod schema_adapter;
 
 pub use base::ProviderAdapter;
+pub use schema_adapter::adapt_for_provider;
 
 /// Detect the LLM provider from an API key prefix.
 ///

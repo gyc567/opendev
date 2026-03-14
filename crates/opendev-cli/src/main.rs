@@ -178,23 +178,43 @@ fn init_tracing(verbose: bool, tui_mode: bool) {
     let filter = if verbose {
         EnvFilter::new("debug")
     } else if tui_mode {
-        // Suppress logs in TUI mode — they conflict with the alternate screen
         EnvFilter::new("warn")
     } else {
         EnvFilter::new("info")
     };
 
-    tracing_subscriber::fmt()
-        .with_env_filter(filter)
-        .with_target(false)
-        .with_writer(if tui_mode {
-            // Write to stderr in TUI mode so logs don't corrupt the alternate screen.
-            // At warn level this should produce almost no output.
-            std::io::stderr as fn() -> std::io::Stderr
-        } else {
-            std::io::stderr as fn() -> std::io::Stderr
-        })
-        .init();
+    if tui_mode {
+        // Redirect logs to file so they don't corrupt the alternate screen
+        if let Some(home) = dirs_next::home_dir() {
+            let log_dir = home.join(".opendev").join("logs");
+            let _ = std::fs::create_dir_all(&log_dir);
+            if let Ok(file) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(log_dir.join("opendev.log"))
+            {
+                tracing_subscriber::fmt()
+                    .with_env_filter(filter)
+                    .with_target(false)
+                    .with_ansi(false)
+                    .with_writer(file)
+                    .init();
+                return;
+            }
+        }
+        // Fallback: suppress everything if we can't open log file
+        tracing_subscriber::fmt()
+            .with_env_filter(EnvFilter::new("error"))
+            .with_target(false)
+            .with_writer(std::io::stderr)
+            .init();
+    } else {
+        tracing_subscriber::fmt()
+            .with_env_filter(filter)
+            .with_target(false)
+            .with_writer(std::io::stderr)
+            .init();
+    }
 }
 
 /// Load the merged AppConfig using standard paths for the given working directory.

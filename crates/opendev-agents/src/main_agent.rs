@@ -34,6 +34,9 @@ pub struct MainAgentConfig {
     pub working_dir: Option<String>,
     /// Optional list of allowed tool names (for subagent restriction).
     pub allowed_tools: Option<Vec<String>>,
+    /// Model provider (e.g., "openai", "anthropic", "gemini", "mistral").
+    /// Used for provider-specific schema adaptation.
+    pub model_provider: Option<String>,
 }
 
 impl MainAgentConfig {
@@ -47,6 +50,7 @@ impl MainAgentConfig {
             max_tokens: Some(4096),
             working_dir: None,
             allowed_tools: None,
+            model_provider: None,
         }
     }
 }
@@ -222,7 +226,12 @@ impl BaseAgent for MainAgent {
     }
 
     fn build_tool_schemas(&self) -> Vec<Value> {
-        self.tool_schemas.clone()
+        // Apply provider-specific schema adaptation if provider is known
+        if let Some(ref provider) = self.config.model_provider {
+            opendev_http::adapters::adapt_for_provider(&self.tool_schemas, provider)
+        } else {
+            self.tool_schemas.clone()
+        }
     }
 
     fn refresh_tools(&mut self) {
@@ -373,6 +382,7 @@ mod tests {
             max_tokens: Some(8192),
             working_dir: Some("/tmp/project".to_string()),
             allowed_tools: None,
+            model_provider: None,
         };
         let registry = Arc::new(ToolRegistry::new());
         MainAgent::new(config, registry)

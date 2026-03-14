@@ -20,6 +20,53 @@ pub struct LlmCallConfig {
     pub max_tokens: Option<u64>,
 }
 
+// ---------------------------------------------------------------------------
+// Reasoning model detection helpers
+// ---------------------------------------------------------------------------
+
+/// Model prefixes that use `max_completion_tokens` instead of `max_tokens`.
+const MAX_COMPLETION_TOKENS_PREFIXES: &[&str] = &["o1", "o3", "o4", "gpt-5"];
+
+/// Model prefixes that do not support the `temperature` parameter.
+const NO_TEMPERATURE_PREFIXES: &[&str] = &["o1", "o3", "o4", "codex"];
+
+/// Check if a model is a reasoning model (o1, o3, o4, codex families).
+pub fn is_reasoning_model(model: &str) -> bool {
+    let lower = model.to_lowercase();
+    NO_TEMPERATURE_PREFIXES
+        .iter()
+        .any(|prefix| lower.starts_with(prefix))
+}
+
+/// Check if a model uses `max_completion_tokens` instead of `max_tokens`.
+pub fn uses_max_completion_tokens(model: &str) -> bool {
+    let lower = model.to_lowercase();
+    MAX_COMPLETION_TOKENS_PREFIXES
+        .iter()
+        .any(|prefix| lower.starts_with(prefix))
+}
+
+/// Check if a model supports the `temperature` parameter.
+pub fn supports_temperature(model: &str) -> bool {
+    !is_reasoning_model(model)
+}
+
+/// Insert the appropriate max tokens parameter for the given model.
+fn insert_max_tokens(payload: &mut Value, model: &str, max_tokens: u64) {
+    if uses_max_completion_tokens(model) {
+        payload["max_completion_tokens"] = serde_json::json!(max_tokens);
+    } else {
+        payload["max_tokens"] = serde_json::json!(max_tokens);
+    }
+}
+
+/// Conditionally insert temperature if the model supports it.
+fn insert_temperature(payload: &mut Value, model: &str, temperature: f64) {
+    if supports_temperature(model) {
+        payload["temperature"] = serde_json::json!(temperature);
+    }
+}
+
 /// Handles different types of LLM calls (normal, thinking, critique, compact).
 ///
 /// Uses composition instead of Python's mixin pattern. Holds a `ResponseCleaner`
@@ -163,10 +210,10 @@ impl LlmCaller {
         });
 
         if let Some(temp) = cfg.temperature {
-            payload["temperature"] = serde_json::json!(temp);
+            insert_temperature(&mut payload, &cfg.model, temp);
         }
         if let Some(max) = cfg.max_tokens {
-            payload["max_tokens"] = serde_json::json!(max);
+            insert_max_tokens(&mut payload, &cfg.model, max);
         }
 
         payload
@@ -207,11 +254,12 @@ impl LlmCaller {
         let mut payload = serde_json::json!({
             "model": cfg.model,
             "messages": messages,
-            "max_tokens": max_tokens,
         });
 
+        insert_max_tokens(&mut payload, &cfg.model, max_tokens);
+
         if let Some(temp) = cfg.temperature {
-            payload["temperature"] = serde_json::json!(temp);
+            insert_temperature(&mut payload, &cfg.model, temp);
         }
 
         payload
@@ -242,11 +290,12 @@ impl LlmCaller {
         let mut payload = serde_json::json!({
             "model": cfg.model,
             "messages": messages,
-            "max_tokens": max_tokens,
         });
 
+        insert_max_tokens(&mut payload, &cfg.model, max_tokens);
+
         if let Some(temp) = cfg.temperature {
-            payload["temperature"] = serde_json::json!(temp);
+            insert_temperature(&mut payload, &cfg.model, temp);
         }
 
         payload
@@ -262,10 +311,10 @@ impl LlmCaller {
         });
 
         if let Some(temp) = self.config.temperature {
-            payload["temperature"] = serde_json::json!(temp);
+            insert_temperature(&mut payload, &self.config.model, temp);
         }
         if let Some(max) = self.config.max_tokens {
-            payload["max_tokens"] = serde_json::json!(max);
+            insert_max_tokens(&mut payload, &self.config.model, max);
         }
 
         payload
@@ -402,7 +451,9 @@ mod tests {
         let payload = caller.build_thinking_payload(&messages, None, None);
 
         assert_eq!(payload["model"], "o1-preview");
-        assert_eq!(payload["max_tokens"], 8192);
+        // o1 uses max_completion_tokens, not max_tokens
+        assert_eq!(payload["max_completion_tokens"], 8192);
+        assert!(payload.get("max_tokens").is_none());
         // temperature should not appear (None)
         assert!(payload.get("temperature").is_none());
     }
@@ -666,6 +717,92 @@ mod tests {
         let resp = caller.parse_action_response(&body);
         assert!(resp.success);
         assert_eq!(resp.content.as_deref(), Some("Hello world"));
+    }
+
+    #[test]
+    fn test_is_reasoning_model() {
+        assert!(is_reasoning_model("o1-preview"));
+        assert!(is_reasoning_model("o1-mini"));
+        assert!(is_reasoning_model("o3-mini"));
+        assert!(is_reasoning_model("o4-mini"));
+        assert!(is_reasoning_model("codex-mini"));
+        assert!(!is_reasoning_model("gpt-4o"));
+        assert!(!is_reasoning_model("gpt-5-turbo"));
+        assert!(!is_reasoning_model("claude-3-opus"));
+    }
+
+    #[test]
+    fn test_uses_max_completion_tokens() {
+        assert!(uses_max_completion_tokens("o1-preview"));
+        assert!(uses_max_completion_tokens("o3-mini"));
+        assert!(uses_max_completion_tokens("o4-mini"));
+        assert!(uses_max_completion_tokens("gpt-5-turbo"));
+        assert!(!uses_max_completion_tokens("gpt-4o"));
+        assert!(!uses_max_completion_tokens("claude-3-opus"));
+        assert!(!uses_max_completion_tokens("codex-mini")); // codex uses max_completion_tokens? No — not in prefix list
+    }
+
+    #[test]
+    fn test_supports_temperature() {
+        assert!(supports_temperature("gpt-4o"));
+        assert!(supports_temperature("gpt-5-turbo"));
+        assert!(supports_temperature("claude-3-opus"));
+        assert!(!supports_temperature("o1-preview"));
+        assert!(!supports_temperature("o3-mini"));
+        assert!(!supports_temperature("codex-mini"));
+    }
+
+    #[test]
+    fn test_action_payload_reasoning_model() {
+        let caller = LlmCaller::new(LlmCallConfig {
+            model: "o3-mini".to_string(),
+            temperature: Some(0.7),
+            max_tokens: Some(4096),
+        });
+        let messages = vec![serde_json::json!({"role": "user", "content": "test"})];
+        let tools = vec![serde_json::json!({"type": "function", "function": {"name": "test"}})];
+        let payload = caller.build_action_payload(&messages, &tools);
+
+        // o3 should use max_completion_tokens, not max_tokens
+        assert_eq!(payload["max_completion_tokens"], 4096);
+        assert!(payload.get("max_tokens").is_none());
+        // o3 should NOT have temperature
+        assert!(payload.get("temperature").is_none());
+    }
+
+    #[test]
+    fn test_critique_payload_reasoning_model() {
+        let caller = make_caller().with_critique_config(LlmCallConfig {
+            model: "o4-mini".to_string(),
+            temperature: Some(0.5),
+            max_tokens: Some(4096),
+        });
+        let payload = caller.build_critique_payload("trace", "system");
+
+        assert_eq!(payload["max_completion_tokens"], 2048); // capped
+        assert!(payload.get("max_tokens").is_none());
+        assert!(payload.get("temperature").is_none()); // o4 doesn't support temp
+    }
+
+    #[test]
+    fn test_refinement_payload_reasoning_model() {
+        let caller = make_caller().with_thinking_config(LlmCallConfig {
+            model: "o1-preview".to_string(),
+            temperature: Some(0.7),
+            max_tokens: Some(8192),
+        });
+        let payload = caller.build_refinement_payload("sys", "trace", "critique");
+
+        assert_eq!(payload["max_completion_tokens"], 4096); // capped at 4096
+        assert!(payload.get("max_tokens").is_none());
+        assert!(payload.get("temperature").is_none()); // o1 doesn't support temp
+    }
+
+    #[test]
+    fn test_case_insensitive_model_detection() {
+        assert!(is_reasoning_model("O1-Preview"));
+        assert!(is_reasoning_model("O3-MINI"));
+        assert!(uses_max_completion_tokens("GPT-5-turbo"));
     }
 
     #[test]

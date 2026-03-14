@@ -218,6 +218,7 @@ impl SubagentManager {
             max_tokens: Some(4096),
             working_dir: Some(working_dir.to_string()),
             allowed_tools,
+            model_provider: None,
         };
 
         let mut agent = MainAgent::new(config, tool_registry);

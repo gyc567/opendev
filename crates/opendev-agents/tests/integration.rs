@@ -354,7 +354,9 @@ fn thinking_payload_uses_thinking_model() {
     let payload = caller.build_thinking_payload(&messages, None, None);
 
     assert_eq!(payload["model"], "o1-preview");
-    assert_eq!(payload["max_tokens"], 8192);
+    // o1 is a reasoning model — uses max_completion_tokens instead of max_tokens
+    assert_eq!(payload["max_completion_tokens"], 8192);
+    assert!(payload.get("max_tokens").is_none());
 }
 
 /// clean_messages strips underscore-prefixed keys.

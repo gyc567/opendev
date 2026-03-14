@@ -5,6 +5,8 @@ use std::path::Path;
 
 use opendev_tools_core::{BaseTool, ToolContext, ToolResult};
 
+use crate::formatter;
+
 /// Tool for writing file contents.
 #[derive(Debug)]
 pub struct FileWriteTool;
@@ -93,15 +95,22 @@ impl BaseTool for FileWriteTool {
             return ToolResult::fail(format!("Failed to rename temp file: {e}"));
         }
 
+        // Auto-format if a formatter is available
+        let formatted = formatter::format_file(file_path, &_ctx.working_dir);
+
         let lines = content.lines().count();
         let bytes = content.len();
 
         let mut metadata = HashMap::new();
         metadata.insert("lines".into(), serde_json::json!(lines));
         metadata.insert("bytes".into(), serde_json::json!(bytes));
+        if formatted {
+            metadata.insert("formatted".into(), serde_json::json!(true));
+        }
 
+        let fmt_note = if formatted { " (formatted)" } else { "" };
         ToolResult::ok_with_metadata(
-            format!("Wrote {bytes} bytes ({lines} lines) to {file_path}"),
+            format!("Wrote {bytes} bytes ({lines} lines) to {file_path}{fmt_note}"),
             metadata,
         )
     }

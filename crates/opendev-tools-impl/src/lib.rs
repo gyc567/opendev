@@ -35,6 +35,7 @@ pub mod diff_preview;
 pub mod edit_replacers;
 pub mod file_edit;
 pub mod file_list;
+pub mod formatter;
 pub mod file_read;
 pub mod file_search;
 pub mod file_write;

@@ -8,6 +8,7 @@ use std::sync::{Arc, LazyLock, Mutex};
 use opendev_tools_core::{BaseTool, ToolContext, ToolResult};
 
 use crate::edit_replacers;
+use crate::formatter;
 
 // ---------------------------------------------------------------------------
 // Per-file locking: serialize concurrent edits to the same file.
@@ -164,6 +165,9 @@ impl BaseTool for FileEditTool {
             return ToolResult::fail(format!("Failed to rename temp file: {e}"));
         }
 
+        // Auto-format if a formatter is available
+        let formatted = formatter::format_file(file_path, &_ctx.working_dir);
+
         let replacements = if replace_all { count } else { 1 };
 
         let mut metadata = HashMap::new();
@@ -174,11 +178,15 @@ impl BaseTool for FileEditTool {
         if pass_name != "simple" {
             metadata.insert("match_pass".into(), serde_json::json!(pass_name));
         }
+        if formatted {
+            metadata.insert("formatted".into(), serde_json::json!(true));
+        }
 
+        let fmt_note = if formatted { " (formatted)" } else { "" };
         ToolResult::ok_with_metadata(
             format!(
                 "Edited {file_path}: {replacements} replacement(s), \
-                 {additions} addition(s) and {removals} removal(s)"
+                 {additions} addition(s) and {removals} removal(s){fmt_note}"
             ),
             metadata,
         )
