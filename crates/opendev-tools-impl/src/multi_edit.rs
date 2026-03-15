@@ -73,11 +73,11 @@ impl BaseTool for MultiEditTool {
                         "properties": {
                             "old_string": {
                                 "type": "string",
-                                "description": "The string to find and replace"
+                                "description": "The string to find and replace. Must be different from new_string"
                             },
                             "new_string": {
                                 "type": "string",
-                                "description": "The replacement string"
+                                "description": "The replacement string. Must be different from old_string"
                             },
                             "replace_all": {
                                 "type": "boolean",
@@ -133,9 +133,7 @@ impl BaseTool for MultiEditTool {
                 .unwrap_or(false);
 
             if old_string == new_string {
-                return ToolResult::fail(format!(
-                    "edit[{i}]: old_string and new_string are identical"
-                ));
+                continue;
             }
 
             edits.push(EditOp {
@@ -400,22 +398,30 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_multi_edit_identical_old_new_fails() {
+    async fn test_multi_edit_identical_old_new_skipped() {
+        let tmp = TempDir::new().unwrap();
+        let file_path = tmp.path().join("test.txt");
+        std::fs::write(&file_path, "aaa bbb ccc").unwrap();
+
         let tool = MultiEditTool;
-        let ctx = ToolContext::new("/tmp");
+        let ctx = ToolContext::new(tmp.path());
         let args = make_args(&[
-            ("file_path", serde_json::json!("/tmp/test.txt")),
+            ("file_path", serde_json::json!(file_path.to_str().unwrap())),
             (
                 "edits",
                 serde_json::json!([
-                    { "old_string": "same", "new_string": "same" }
+                    { "old_string": "same", "new_string": "same" },
+                    { "old_string": "aaa", "new_string": "xxx" }
                 ]),
             ),
         ]);
 
         let result = tool.execute(args, &ctx).await;
-        assert!(!result.success);
-        assert!(result.error.unwrap().contains("identical"));
+        assert!(result.success, "expected success: {:?}", result.error);
+
+        // The no-op edit should be skipped, but the valid edit applied
+        let content = std::fs::read_to_string(&file_path).unwrap();
+        assert_eq!(content, "xxx bbb ccc");
     }
 
     #[tokio::test]

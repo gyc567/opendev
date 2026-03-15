@@ -112,7 +112,7 @@ static TOOL_REGISTRY: &[ToolDisplayEntry] = &[
     ToolDisplayEntry {
         names: &["multi_edit"],
         category: ToolCategory::FileWrite,
-        verb: "Multi-Edit",
+        verb: "Edit",
         label: "file",
         primary_arg_keys: &["file_path", "path"],
         result_format: ResultFormat::File,
