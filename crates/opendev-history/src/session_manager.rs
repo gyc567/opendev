@@ -361,6 +361,12 @@ impl SessionManager {
         listing.list_sessions(None, include_archived)
     }
 
+    /// Delete a session permanently (removes JSON + JSONL files and index entry).
+    pub fn delete_session(&self, session_id: &str) -> std::io::Result<()> {
+        let listing = crate::listing::SessionListing::new(self.session_dir.clone());
+        listing.delete_session(session_id)
+    }
+
     /// Revert a session to a given message step.
     ///
     /// Truncates the session's messages to `step` entries (keeping messages

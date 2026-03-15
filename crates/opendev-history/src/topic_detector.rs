@@ -81,9 +81,15 @@ struct TopicResult {
 /// ```ignore
 /// let detector = TopicDetector::new("openai");
 /// detector.detect(session_manager, session_id, &messages);
+/// // Or use the inline async version:
+/// if let Some(title) = detector.detect_title(&messages).await {
+///     session_manager.set_title(&session_id, &title).ok();
+/// }
 /// ```
 ///
 /// The `detect()` call is non-blocking — it spawns a tokio task.
+/// The `detect_title()` call is async and returns the title directly.
+#[derive(Clone)]
 pub struct TopicDetector {
     enabled: bool,
     provider: String,
@@ -121,6 +127,44 @@ impl TopicDetector {
     /// Check if topic detection is enabled (has a valid API key).
     pub fn is_enabled(&self) -> bool {
         self.enabled
+    }
+
+    /// Detect the topic inline and return the title if a new topic is found.
+    ///
+    /// This is the async version — call it when you want the title directly
+    /// without needing `Arc<Mutex<SessionManager>>`.
+    pub async fn detect_title(&self, messages: &[SimpleMessage]) -> Option<String> {
+        if !self.enabled {
+            return None;
+        }
+
+        let recent: Vec<SimpleMessage> = if messages.len() > MAX_RECENT_MESSAGES {
+            messages[messages.len() - MAX_RECENT_MESSAGES..].to_vec()
+        } else {
+            messages.to_vec()
+        };
+
+        if recent.is_empty() {
+            return None;
+        }
+
+        match call_llm(&self.client, &self.provider, &self.model, &self.api_key, &recent).await {
+            Ok(result) if result.is_new_topic => {
+                result.title.map(|t| {
+                    let trimmed = t.trim().to_string();
+                    if trimmed.len() > MAX_TITLE_LEN {
+                        trimmed[..MAX_TITLE_LEN].to_string()
+                    } else {
+                        trimmed
+                    }
+                }).filter(|t| !t.is_empty())
+            }
+            Ok(_) => None,
+            Err(e) => {
+                debug!("Topic detection failed: {e}");
+                None
+            }
+        }
     }
 
     /// Trigger topic detection in a background task.

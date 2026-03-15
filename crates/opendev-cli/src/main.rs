@@ -104,6 +104,12 @@ enum Commands {
         #[command(subcommand)]
         action: RunAction,
     },
+
+    /// Manage conversation sessions.
+    Session {
+        #[command(subcommand)]
+        action: SessionAction,
+    },
 }
 
 /// Config subcommands.
@@ -155,6 +161,33 @@ enum McpAction {
     Disable {
         /// Server name.
         name: String,
+    },
+}
+
+/// Session subcommands.
+#[derive(Subcommand, Debug)]
+enum SessionAction {
+    /// List recent sessions.
+    List {
+        /// Include archived sessions.
+        #[arg(long)]
+        archived: bool,
+        /// Maximum number of sessions to show.
+        #[arg(short = 'n', long, default_value_t = 20)]
+        max_count: usize,
+        /// Output as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Delete a session permanently.
+    Delete {
+        /// Session ID to delete.
+        id: String,
+    },
+    /// Export a session as JSON.
+    Export {
+        /// Session ID to export. Defaults to the most recent session.
+        id: Option<String>,
     },
 }
 
@@ -357,6 +390,9 @@ async fn main() {
         }
         Some(Commands::Run { action }) => {
             handle_run(action, &working_dir).await;
+        }
+        Some(Commands::Session { action }) => {
+            handle_session(action, &working_dir);
         }
         None => {
             // Replay mode
@@ -577,6 +613,109 @@ fn handle_mcp(action: McpAction, working_dir: &std::path::Path) {
                 }
                 None => {
                     eprintln!("Error: MCP server '{name}' not found.");
+                    std::process::exit(1);
+                }
+            }
+        }
+    }
+}
+
+/// Handle session subcommands.
+fn handle_session(action: SessionAction, working_dir: &std::path::Path) {
+    let paths = opendev_config::Paths::new(Some(working_dir.to_path_buf()));
+    let session_dir = paths.project_sessions_dir(working_dir);
+    let session_manager = match opendev_history::SessionManager::new(session_dir) {
+        Ok(sm) => sm,
+        Err(e) => {
+            eprintln!("Error: failed to initialize session manager: {e}");
+            std::process::exit(1);
+        }
+    };
+
+    match action {
+        SessionAction::List {
+            archived,
+            max_count,
+            json,
+        } => {
+            let sessions = session_manager.list_sessions(archived);
+            let sessions: Vec<_> = sessions.into_iter().take(max_count).collect();
+
+            if json {
+                match serde_json::to_string_pretty(&sessions) {
+                    Ok(output) => println!("{output}"),
+                    Err(e) => {
+                        eprintln!("Error: failed to serialize sessions: {e}");
+                        std::process::exit(1);
+                    }
+                }
+                return;
+            }
+
+            if sessions.is_empty() {
+                println!("No sessions found.");
+                if !archived {
+                    println!("Tip: use --archived to include archived sessions.");
+                }
+                return;
+            }
+
+            let header_title = "TITLE";
+            println!(
+                "{:<38}  {:<20}  {:>5}  {header_title}",
+                "ID", "UPDATED", "MSGS"
+            );
+            println!("{}", "-".repeat(90));
+            for s in &sessions {
+                let updated = s.updated_at.format("%Y-%m-%d %H:%M");
+                let title = s.title.as_deref().unwrap_or("-");
+                let title_display = if title.len() > 30 {
+                    format!("{}...", &title[..27])
+                } else {
+                    title.to_string()
+                };
+                println!(
+                    "{:<38}  {:<20}  {:>5}  {}",
+                    s.id, updated, s.message_count, title_display
+                );
+            }
+            println!(
+                "\nShowing {} session(s). Use -n to show more.",
+                sessions.len()
+            );
+        }
+        SessionAction::Delete { id } => {
+            if let Err(e) = session_manager.delete_session(&id) {
+                eprintln!("Error: failed to delete session '{id}': {e}");
+                std::process::exit(1);
+            }
+            println!("Deleted session: {id}");
+        }
+        SessionAction::Export { id } => {
+            let session_id = if let Some(id) = id {
+                id
+            } else {
+                // Use the most recent session
+                let sessions = session_manager.list_sessions(false);
+                match sessions.first() {
+                    Some(s) => s.id.clone(),
+                    None => {
+                        eprintln!("Error: no sessions found.");
+                        std::process::exit(1);
+                    }
+                }
+            };
+
+            match session_manager.load_session(&session_id) {
+                Ok(session) => match serde_json::to_string_pretty(&session) {
+                    Ok(output) => println!("{output}"),
+                    Err(e) => {
+                        eprintln!("Error: failed to serialize session: {e}");
+                        std::process::exit(1);
+                    }
+                },
+                Err(e) => {
+                    eprintln!("Error: failed to load session '{session_id}': {e}");
                     std::process::exit(1);
                 }
             }

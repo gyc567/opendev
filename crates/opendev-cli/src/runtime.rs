@@ -17,6 +17,7 @@ use opendev_agents::react_loop::{ReactLoop, ReactLoopConfig};
 use opendev_agents::traits::{AgentError, AgentEventCallback, AgentResult};
 use opendev_context::{ArtifactIndex, ContextCompactor};
 use opendev_history::SessionManager;
+use opendev_history::topic_detector::{TopicDetector, SimpleMessage};
 use opendev_http::HttpClient;
 use opendev_http::adapted_client::AdaptedClient;
 use opendev_http::adapters::base::ProviderAdapter;
@@ -68,6 +69,8 @@ pub struct AgentRuntime {
     pub mcp_manager: Option<Arc<McpManager>>,
     /// Shared skill loader for re-registering invoke_skill with MCP support.
     skill_loader: Arc<Mutex<opendev_agents::SkillLoader>>,
+    /// LLM-based topic detector for auto-generating session titles.
+    topic_detector: TopicDetector,
 }
 
 /// Receivers returned from tool registration for TUI bridging.
@@ -469,6 +472,7 @@ impl AgentRuntime {
         let cost_tracker = Mutex::new(CostTracker::new());
         let artifact_index = Mutex::new(ArtifactIndex::new());
         let compactor = Mutex::new(ContextCompactor::new(config.max_context_tokens));
+        let topic_detector = TopicDetector::new(&provider);
 
         Ok(Self {
             config,
@@ -488,6 +492,7 @@ impl AgentRuntime {
             channel_receivers: Some(channel_receivers),
             mcp_manager: None,
             skill_loader,
+            topic_detector,
         })
     }
 
@@ -666,6 +671,53 @@ impl AgentRuntime {
         // Step 8: Persist session to disk
         if let Err(e) = self.session_manager.save_current() {
             warn!("Failed to save session: {e}");
+        }
+
+        // Step 9: Auto-detect session title (only when session has no title yet)
+        if self.topic_detector.is_enabled() {
+            let needs_title = self
+                .session_manager
+                .current_session()
+                .map(|s| !s.metadata.contains_key("title"))
+                .unwrap_or(false);
+
+            if needs_title {
+                let simple_msgs: Vec<SimpleMessage> = self
+                    .session_manager
+                    .current_session()
+                    .map(|s| {
+                        s.messages
+                            .iter()
+                            .filter_map(|m| {
+                                let role = match m.role {
+                                    Role::User => "user",
+                                    Role::Assistant => "assistant",
+                                    _ => return None,
+                                };
+                                if m.content.is_empty() {
+                                    return None;
+                                }
+                                Some(SimpleMessage {
+                                    role: role.to_string(),
+                                    content: m.content.clone(),
+                                })
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+
+                if let Some(title) = self.topic_detector.detect_title(&simple_msgs).await
+                    && let Some(session) = self.session_manager.current_session()
+                {
+                    let session_id = session.id.clone();
+                    if let Err(e) = self.session_manager.set_title(&session_id, &title) {
+                        debug!("Failed to set session title: {e}");
+                    } else {
+                        self.session_manager.save_current().ok();
+                        debug!(title, "Auto-detected session title");
+                    }
+                }
+            }
         }
 
         // Log session cost
