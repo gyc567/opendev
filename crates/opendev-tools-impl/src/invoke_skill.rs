@@ -120,6 +120,7 @@ impl BaseTool for InvokeSkillTool {
                 // Check if the user is confusing invoke_skill with spawn_subagent.
                 let subagent_types = [
                     "code-explorer", "code_explorer", "planner",
+                    "general", "build",
                     "ask-user", "ask_user",
                 ];
                 let normalized = skill_name.to_lowercase();

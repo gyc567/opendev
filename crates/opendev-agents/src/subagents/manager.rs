@@ -22,6 +22,8 @@ use opendev_tools_core::ToolRegistry;
 pub enum SubagentType {
     CodeExplorer,
     Planner,
+    General,
+    Build,
     AskUser,
     Custom,
 }
@@ -32,6 +34,8 @@ impl SubagentType {
         match name {
             "Code-Explorer" | "code_explorer" => Self::CodeExplorer,
             "Planner" | "planner" => Self::Planner,
+            "General" | "general" => Self::General,
+            "Build" | "build" => Self::Build,
             "ask-user" | "ask_user" => Self::AskUser,
             _ => Self::Custom,
         }
@@ -42,6 +46,8 @@ impl SubagentType {
         match self {
             Self::CodeExplorer => "Code-Explorer",
             Self::Planner => "Planner",
+            Self::General => "General",
+            Self::Build => "Build",
             Self::AskUser => "ask-user",
             Self::Custom => "custom",
         }
@@ -115,6 +121,16 @@ impl SubagentManager {
             embedded::SUBAGENTS_SUBAGENT_CODE_EXPLORER,
         ));
         mgr.register(builtins::planner(embedded::SUBAGENTS_SUBAGENT_PLANNER));
+        mgr.register(builtins::general(
+            "You are a versatile coding assistant. Complete the task using all tools available to you. \
+             Read files, search code, edit files, run commands, and use web tools as needed. \
+             Be thorough and methodical.",
+        ));
+        mgr.register(builtins::build(
+            "You are a build and test runner. Your job is to run builds, analyze errors, \
+             fix compilation failures, and ensure tests pass. Focus on the build output \
+             and fix issues systematically.",
+        ));
         mgr.register(builtins::project_init(
             embedded::SUBAGENTS_SUBAGENT_PROJECT_INIT,
         ));
@@ -439,6 +455,10 @@ mod tests {
             SubagentType::CodeExplorer
         );
         assert_eq!(SubagentType::from_name("Planner"), SubagentType::Planner);
+        assert_eq!(SubagentType::from_name("General"), SubagentType::General);
+        assert_eq!(SubagentType::from_name("general"), SubagentType::General);
+        assert_eq!(SubagentType::from_name("Build"), SubagentType::Build);
+        assert_eq!(SubagentType::from_name("build"), SubagentType::Build);
         assert_eq!(SubagentType::from_name("ask-user"), SubagentType::AskUser);
         assert_eq!(SubagentType::from_name("unknown"), SubagentType::Custom);
     }
@@ -446,15 +466,19 @@ mod tests {
     #[test]
     fn test_subagent_type_canonical_name() {
         assert_eq!(SubagentType::CodeExplorer.canonical_name(), "Code-Explorer");
+        assert_eq!(SubagentType::General.canonical_name(), "General");
+        assert_eq!(SubagentType::Build.canonical_name(), "Build");
         assert_eq!(SubagentType::AskUser.canonical_name(), "ask-user");
     }
 
     #[test]
     fn test_with_builtins() {
         let mgr = SubagentManager::with_builtins();
-        assert_eq!(mgr.len(), 3);
+        assert_eq!(mgr.len(), 5);
         assert!(mgr.get("Code-Explorer").is_some());
         assert!(mgr.get("Planner").is_some());
+        assert!(mgr.get("General").is_some());
+        assert!(mgr.get("Build").is_some());
         assert!(mgr.get("project_init").is_some());
     }
 
