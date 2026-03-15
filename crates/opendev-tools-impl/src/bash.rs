@@ -36,6 +36,56 @@ const LLM_KEEP_HEAD_CHARS: usize = 5_000;
 const LLM_KEEP_TAIL_CHARS: usize = 5_000;
 
 // ---------------------------------------------------------------------------
+// Sensitive environment variable patterns (stripped from child processes)
+// ---------------------------------------------------------------------------
+
+/// Env var name suffixes that indicate API keys, tokens, or secrets.
+/// These are removed from child process environments to prevent leakage.
+const SENSITIVE_ENV_SUFFIXES: &[&str] = &[
+    "_API_KEY",
+    "_SECRET_KEY",
+    "_SECRET",
+    "_TOKEN",
+    "_PASSWORD",
+    "_CREDENTIALS",
+];
+
+/// Specific env var names to always strip (case-sensitive).
+const SENSITIVE_ENV_EXACT: &[&str] = &[
+    "OPENAI_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "AZURE_OPENAI_API_KEY",
+    "GROQ_API_KEY",
+    "MISTRAL_API_KEY",
+    "DEEPINFRA_API_KEY",
+    "OPENROUTER_API_KEY",
+    "FIREWORKS_API_KEY",
+    "GOOGLE_API_KEY",
+    "GITHUB_TOKEN",
+    "GH_TOKEN",
+    "NPM_TOKEN",
+    "PYPI_TOKEN",
+];
+
+/// Check if an environment variable name is sensitive and should be stripped.
+fn is_sensitive_env(name: &str) -> bool {
+    let upper = name.to_uppercase();
+    if SENSITIVE_ENV_EXACT.iter().any(|&e| upper == e) {
+        return true;
+    }
+    SENSITIVE_ENV_SUFFIXES
+        .iter()
+        .any(|suffix| upper.ends_with(suffix))
+}
+
+/// Build a filtered environment map: inherits all env vars except sensitive ones.
+fn filtered_env() -> HashMap<String, String> {
+    std::env::vars()
+        .filter(|(key, _)| !is_sensitive_env(key))
+        .collect()
+}
+
+// ---------------------------------------------------------------------------
 // Dangerous-command regex patterns
 // ---------------------------------------------------------------------------
 
@@ -357,11 +407,17 @@ impl BashTool {
         let idle_timeout = base_idle.min(Duration::from_secs(timeout_secs));
         let max_timeout = base_max.min(Duration::from_secs(timeout_secs));
 
-        // Spawn with new process group
+        // Spawn with new process group.
+        // Use filtered environment to prevent API keys/tokens from leaking
+        // into child processes. The filtered_env() strips known sensitive
+        // variables (API keys, tokens, secrets) while preserving everything else.
+        let safe_env = filtered_env();
         let mut cmd = Command::new("sh");
         cmd.arg("-c")
             .arg(&exec_command)
             .current_dir(working_dir)
+            .env_clear()
+            .envs(&safe_env)
             .env("PYTHONUNBUFFERED", "1")
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped());
@@ -579,10 +635,13 @@ impl BashTool {
     async fn run_background(&self, command: &str, working_dir: &std::path::Path) -> ToolResult {
         let exec_command = prepare_command(command);
 
+        let safe_env = filtered_env();
         let mut cmd = Command::new("sh");
         cmd.arg("-c")
             .arg(&exec_command)
             .current_dir(working_dir)
+            .env_clear()
+            .envs(&safe_env)
             .env("PYTHONUNBUFFERED", "1")
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped());
@@ -1493,5 +1552,61 @@ mod tests {
         assert!(needs_auto_confirm("npm init"));
         assert!(!needs_auto_confirm("npm install express"));
         assert!(!needs_auto_confirm("echo hello"));
+    }
+
+    // ---- Environment variable filtering ----
+
+    #[test]
+    fn test_is_sensitive_env_exact_matches() {
+        assert!(is_sensitive_env("OPENAI_API_KEY"));
+        assert!(is_sensitive_env("ANTHROPIC_API_KEY"));
+        assert!(is_sensitive_env("GITHUB_TOKEN"));
+        assert!(is_sensitive_env("GH_TOKEN"));
+        assert!(is_sensitive_env("NPM_TOKEN"));
+    }
+
+    #[test]
+    fn test_is_sensitive_env_suffix_matches() {
+        assert!(is_sensitive_env("MY_CUSTOM_API_KEY"));
+        assert!(is_sensitive_env("DATABASE_PASSWORD"));
+        assert!(is_sensitive_env("AWS_SECRET_KEY"));
+        assert!(is_sensitive_env("SOME_SECRET"));
+        assert!(is_sensitive_env("AUTH_TOKEN"));
+        assert!(is_sensitive_env("SERVICE_CREDENTIALS"));
+    }
+
+    #[test]
+    fn test_is_sensitive_env_case_insensitive() {
+        assert!(is_sensitive_env("openai_api_key"));
+        assert!(is_sensitive_env("github_token"));
+        assert!(is_sensitive_env("my_api_key"));
+    }
+
+    #[test]
+    fn test_is_sensitive_env_non_sensitive() {
+        assert!(!is_sensitive_env("PATH"));
+        assert!(!is_sensitive_env("HOME"));
+        assert!(!is_sensitive_env("SHELL"));
+        assert!(!is_sensitive_env("USER"));
+        assert!(!is_sensitive_env("LANG"));
+        assert!(!is_sensitive_env("TERM"));
+        assert!(!is_sensitive_env("CARGO_HOME"));
+        assert!(!is_sensitive_env("PYTHONUNBUFFERED"));
+        assert!(!is_sensitive_env("NODE_ENV"));
+    }
+
+    #[test]
+    fn test_filtered_env_excludes_sensitive() {
+        // Set a known sensitive env var for the test.
+        // SAFETY: single-threaded test context
+        unsafe { std::env::set_var("TEST_OPENDEV_API_KEY", "secret123") };
+        let env = filtered_env();
+        assert!(
+            !env.contains_key("TEST_OPENDEV_API_KEY"),
+            "Filtered env should not contain API keys"
+        );
+        // PATH should be preserved.
+        assert!(env.contains_key("PATH"), "PATH should be in filtered env");
+        unsafe { std::env::remove_var("TEST_OPENDEV_API_KEY") };
     }
 }
