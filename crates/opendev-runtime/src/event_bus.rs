@@ -14,6 +14,8 @@ use serde_json::Value;
 use tokio::sync::broadcast;
 use tracing::debug;
 
+use crate::session_status::SessionStatus;
+
 /// Maximum number of events buffered per channel.
 const DEFAULT_CAPACITY: usize = 256;
 
@@ -117,6 +119,12 @@ pub enum RuntimeEvent {
         session_id: String,
         timestamp_ms: u64,
     },
+    /// Session status changed (idle → busy → retry → idle).
+    SessionStatusChanged {
+        session_id: String,
+        status: SessionStatus,
+        timestamp_ms: u64,
+    },
 
     // -- Cost events --
     /// Token usage was recorded.
@@ -164,7 +172,9 @@ impl RuntimeEvent {
             Self::AgentStart { .. } | Self::AgentEnd { .. } | Self::AgentError { .. } => {
                 EventTopic::Agent
             }
-            Self::SessionStart { .. } | Self::SessionEnd { .. } => EventTopic::Session,
+            Self::SessionStart { .. }
+            | Self::SessionEnd { .. }
+            | Self::SessionStatusChanged { .. } => EventTopic::Session,
             Self::TokenUsage { .. } | Self::BudgetExhausted { .. } => EventTopic::Cost,
             Self::ConfigReloaded { .. } | Self::ShutdownRequested { .. } => EventTopic::System,
             Self::Custom { .. } => EventTopic::Custom,
@@ -183,6 +193,7 @@ impl RuntimeEvent {
             | Self::AgentError { timestamp_ms, .. }
             | Self::SessionStart { timestamp_ms, .. }
             | Self::SessionEnd { timestamp_ms, .. }
+            | Self::SessionStatusChanged { timestamp_ms, .. }
             | Self::TokenUsage { timestamp_ms, .. }
             | Self::BudgetExhausted { timestamp_ms, .. }
             | Self::ConfigReloaded { timestamp_ms, .. }

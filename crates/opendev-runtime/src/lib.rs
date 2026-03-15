@@ -31,6 +31,7 @@ pub mod plan_names;
 pub mod sandbox;
 pub mod secrets;
 pub mod session_model;
+pub mod session_status;
 pub mod snapshot;
 pub mod sound;
 pub mod state_snapshot;
@@ -71,6 +72,7 @@ pub use plan_approval::{
 };
 pub use sandbox::SandboxConfig;
 pub use secrets::{SecretKind, SecretMatch, detect_secrets, redact_secrets};
+pub use session_status::{SessionStatus, SessionStatusTracker};
 pub use snapshot::SnapshotManager;
 pub use sound::play_finish_sound;
 pub use state_snapshot::{AppStateSnapshot, SnapshotPersistence, ToolResultEntry};
