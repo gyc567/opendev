@@ -10,7 +10,7 @@ use opendev_tools_core::{BaseTool, ToolContext, ToolResult};
 use crate::diagnostics_helper;
 use crate::edit_replacers;
 use crate::formatter;
-use crate::path_utils::{resolve_file_path, validate_path_access};
+use crate::path_utils::{is_sensitive_file, resolve_file_path, validate_path_access};
 
 // ---------------------------------------------------------------------------
 // Per-file locking: serialize concurrent edits to the same file.
@@ -105,6 +105,15 @@ impl BaseTool for FileEditTool {
 
         if !path.exists() {
             return ToolResult::fail(format!("File not found: {file_path}"));
+        }
+
+        // Block editing sensitive files (same as file_write).
+        if let Some(reason) = is_sensitive_file(&path) {
+            return ToolResult::fail(format!(
+                "Refusing to edit {}: {} — this file likely contains secrets. \
+                 If you need to modify it, ask the user to do so manually.",
+                file_path, reason
+            ));
         }
 
         // Acquire per-file lock — scoped so the guard drops before async diagnostics
@@ -460,5 +469,45 @@ mod tests {
 
         let content = std::fs::read_to_string(&file_path).unwrap();
         assert_eq!(content, "xxx yyy ccc");
+    }
+
+    #[tokio::test]
+    async fn test_edit_rejects_sensitive_file() {
+        let tmp = TempDir::new().unwrap();
+        let env_file = tmp.path().join(".env");
+        std::fs::write(&env_file, "SECRET=abc123\n").unwrap();
+
+        let tool = FileEditTool;
+        let ctx = ToolContext::new(tmp.path());
+        let args = make_args(&[
+            ("file_path", serde_json::json!(env_file.to_str().unwrap())),
+            ("old_string", serde_json::json!("abc123")),
+            ("new_string", serde_json::json!("newvalue")),
+        ]);
+
+        let result = tool.execute(args, &ctx).await;
+        assert!(!result.success);
+        let err = result.error.unwrap();
+        assert!(err.contains("secrets"), "Should mention secrets: {err}");
+        // File should be unchanged
+        assert_eq!(std::fs::read_to_string(&env_file).unwrap(), "SECRET=abc123\n");
+    }
+
+    #[tokio::test]
+    async fn test_edit_allows_env_example() {
+        let tmp = TempDir::new().unwrap();
+        let env_file = tmp.path().join(".env.example");
+        std::fs::write(&env_file, "SECRET=placeholder\n").unwrap();
+
+        let tool = FileEditTool;
+        let ctx = ToolContext::new(tmp.path());
+        let args = make_args(&[
+            ("file_path", serde_json::json!(env_file.to_str().unwrap())),
+            ("old_string", serde_json::json!("placeholder")),
+            ("new_string", serde_json::json!("your_value_here")),
+        ]);
+
+        let result = tool.execute(args, &ctx).await;
+        assert!(result.success, ".env.example should be editable: {:?}", result.error);
     }
 }

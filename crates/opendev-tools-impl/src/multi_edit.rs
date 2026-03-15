@@ -13,7 +13,7 @@ use opendev_tools_core::{BaseTool, ToolContext, ToolResult};
 use crate::diagnostics_helper;
 use crate::edit_replacers;
 use crate::formatter;
-use crate::path_utils::{resolve_file_path, validate_path_access};
+use crate::path_utils::{is_sensitive_file, resolve_file_path, validate_path_access};
 
 // ---------------------------------------------------------------------------
 // Per-file locking: serialize concurrent edits to the same file.
@@ -154,6 +154,15 @@ impl BaseTool for MultiEditTool {
 
         if !path.exists() {
             return ToolResult::fail(format!("File not found: {file_path}"));
+        }
+
+        // Block editing sensitive files.
+        if let Some(reason) = is_sensitive_file(&path) {
+            return ToolResult::fail(format!(
+                "Refusing to edit {}: {} — this file likely contains secrets. \
+                 If you need to modify it, ask the user to do so manually.",
+                file_path, reason
+            ));
         }
 
         // Acquire per-file lock — scoped so the guard drops before async diagnostics

@@ -760,8 +760,8 @@ impl FileSearchTool {
             OutputMode::Content => {
                 for m in &matches {
                     let rel = m.path.strip_prefix(search_path).unwrap_or(&m.path);
-                    let line = if m.line.len() > 500 {
-                        format!("{}...", &m.line[..500])
+                    let line = if m.line.len() > 2000 {
+                        format!("{}...", &m.line[..2000])
                     } else {
                         m.line.clone()
                     };
