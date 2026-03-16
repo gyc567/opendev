@@ -140,6 +140,14 @@ pub enum AppEvent {
     /// Session cost budget has been exhausted. The agent loop should pause.
     BudgetExhausted { cost_usd: f64, budget_usd: f64 },
 
+    // -- File change events --
+    /// File change summary after a query completes.
+    FileChangeSummary {
+        files: usize,
+        additions: u64,
+        deletions: u64,
+    },
+
     // -- Context events --
     /// Context window usage percentage updated (0.0–100.0).
     ContextUsage(f64),
@@ -548,6 +556,14 @@ impl RecordedEvent {
                 "BudgetExhausted".to_string(),
                 serde_json::json!({"cost_usd": cost_usd, "budget_usd": budget_usd}),
             ),
+            AppEvent::FileChangeSummary {
+                files,
+                additions,
+                deletions,
+            } => (
+                "FileChangeSummary".to_string(),
+                serde_json::json!({"files": files, "additions": additions, "deletions": deletions}),
+            ),
             AppEvent::ContextUsage(pct) => {
                 ("ContextUsage".to_string(), serde_json::json!({"pct": pct}))
             }
@@ -764,6 +780,16 @@ impl RecordedEvent {
                 Some(AppEvent::BudgetExhausted {
                     cost_usd,
                     budget_usd,
+                })
+            }
+            "FileChangeSummary" => {
+                let files = self.payload.get("files")?.as_u64()? as usize;
+                let additions = self.payload.get("additions")?.as_u64()?;
+                let deletions = self.payload.get("deletions")?.as_u64()?;
+                Some(AppEvent::FileChangeSummary {
+                    files,
+                    additions,
+                    deletions,
                 })
             }
             "ContextUsage" => {

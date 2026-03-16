@@ -71,6 +71,8 @@ pub struct AgentRuntime {
     skill_loader: Arc<Mutex<opendev_agents::SkillLoader>>,
     /// LLM-based topic detector for auto-generating session titles.
     topic_detector: TopicDetector,
+    /// Shadow git snapshot manager for tracking file changes per query.
+    snapshot_manager: Mutex<opendev_history::SnapshotManager>,
 }
 
 /// Receivers returned from tool registration for TUI bridging.
@@ -558,6 +560,9 @@ impl AgentRuntime {
             mcp_manager: None,
             skill_loader,
             topic_detector,
+            snapshot_manager: Mutex::new(opendev_history::SnapshotManager::new(
+                &working_dir.to_string_lossy(),
+            )),
         })
     }
 
@@ -697,6 +702,13 @@ impl AgentRuntime {
         self.react_loop
             .set_thinking_context(Some(query.to_string()), thinking_sys_prompt);
 
+        // Step 6b: Snapshot workspace state before the react loop
+        let pre_snapshot = if let Ok(mut mgr) = self.snapshot_manager.lock() {
+            mgr.track()
+        } else {
+            None
+        };
+
         // Step 7: Run the ReAct loop
         let pre_count = messages.len();
         // Use interrupt_token as both TaskMonitor and CancellationToken source
@@ -721,7 +733,55 @@ impl AgentRuntime {
             )
             .await?;
 
-        // Step 7b: Save all new messages from the react loop to the session.
+        // Step 7b: Snapshot workspace state after the react loop and compute file changes
+        if let Some(ref pre_hash) = pre_snapshot {
+            if let Ok(mut mgr) = self.snapshot_manager.lock() {
+                let post_hash = mgr.track();
+                if let Some(ref post_hash) = post_hash {
+                    if pre_hash != post_hash {
+                        let stats = mgr.diff_numstat(pre_hash, post_hash);
+                        if !stats.is_empty() {
+                            let total_additions: u64 = stats.iter().map(|s| s.additions).sum();
+                            let total_deletions: u64 = stats.iter().map(|s| s.deletions).sum();
+                            let total_files = stats.len();
+
+                            // Populate session file_changes
+                            if let Some(session) = self.session_manager.current_session_mut() {
+                                use opendev_models::file_change::{FileChange, FileChangeType};
+                                for stat in &stats {
+                                    let change_type = if stat.additions > 0 && stat.deletions == 0 {
+                                        // Could be a new file or pure addition
+                                        FileChangeType::Created
+                                    } else if stat.additions == 0 && stat.deletions > 0 {
+                                        FileChangeType::Deleted
+                                    } else {
+                                        FileChangeType::Modified
+                                    };
+                                    let mut fc = FileChange::new(change_type, stat.file_path.clone());
+                                    fc.lines_added = stat.additions;
+                                    fc.lines_removed = stat.deletions;
+                                    session.add_file_change(fc);
+                                }
+                            }
+
+                            // Emit file change callback to TUI
+                            if let Some(cb) = event_callback {
+                                cb.on_file_changed(total_files, total_additions, total_deletions);
+                            }
+
+                            info!(
+                                files = total_files,
+                                additions = total_additions,
+                                deletions = total_deletions,
+                                "File changes detected after query"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        // Step 7c: Save all new messages from the react loop to the session.
         // Convert the new API values (assistant + tool messages) back to ChatMessages
         // so tool calls and their results are fully preserved.
         {

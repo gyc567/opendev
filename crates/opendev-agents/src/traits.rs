@@ -223,6 +223,8 @@ pub trait AgentEventCallback: Send + Sync {
     fn on_context_usage(&self, _pct: f64) {}
     /// Token usage from an LLM call.
     fn on_token_usage(&self, _input_tokens: u64, _output_tokens: u64) {}
+    /// File changes detected after a query completes.
+    fn on_file_changed(&self, _files: usize, _additions: u64, _deletions: u64) {}
 }
 
 /// Dependencies injected into agent runs.

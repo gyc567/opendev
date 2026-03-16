@@ -75,6 +75,14 @@ impl AgentEventCallback for TuiEventCallback {
     fn on_context_usage(&self, pct: f64) {
         let _ = self.tx.send(AppEvent::ContextUsage(pct));
     }
+
+    fn on_file_changed(&self, files: usize, additions: u64, deletions: u64) {
+        let _ = self.tx.send(AppEvent::FileChangeSummary {
+            files,
+            additions,
+            deletions,
+        });
+    }
 }
 
 /// Bridges the TUI event loop with the AgentRuntime.

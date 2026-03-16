@@ -37,6 +37,7 @@ pub struct StatusBarWidget<'a> {
     mcp_status: Option<(usize, usize)>,
     mcp_has_errors: bool,
     background_tasks: usize,
+    file_changes: Option<(usize, u64, u64)>,
 }
 
 impl<'a> StatusBarWidget<'a> {
@@ -62,6 +63,7 @@ impl<'a> StatusBarWidget<'a> {
             mcp_status: None,
             mcp_has_errors: false,
             background_tasks: 0,
+            file_changes: None,
         }
     }
 
@@ -93,6 +95,11 @@ impl<'a> StatusBarWidget<'a> {
 
     pub fn background_tasks(mut self, count: usize) -> Self {
         self.background_tasks = count;
+        self
+    }
+
+    pub fn file_changes(mut self, changes: Option<(usize, u64, u64)>) -> Self {
+        self.file_changes = changes;
         self
     }
 
@@ -217,6 +224,42 @@ impl Widget for StatusBarWidget<'_> {
                 " (Ctrl+B)",
                 Style::default().fg(style_tokens::GREY),
             ));
+        }
+
+        // File changes summary
+        if let Some((files, additions, deletions)) = self.file_changes {
+            spans.push(Span::styled(
+                "  \u{2502}  ",
+                Style::default().fg(style_tokens::GREY),
+            ));
+            spans.push(Span::styled(
+                format!("{files} file{}", if files == 1 { "" } else { "s" }),
+                Style::default()
+                    .fg(style_tokens::BLUE_PATH)
+                    .add_modifier(Modifier::BOLD),
+            ));
+            if additions > 0 || deletions > 0 {
+                spans.push(Span::styled(" ", Style::default()));
+                if additions > 0 {
+                    spans.push(Span::styled(
+                        format!("+{additions}"),
+                        Style::default()
+                            .fg(style_tokens::GREEN_BRIGHT)
+                            .add_modifier(Modifier::BOLD),
+                    ));
+                }
+                if additions > 0 && deletions > 0 {
+                    spans.push(Span::styled(" ", Style::default()));
+                }
+                if deletions > 0 {
+                    spans.push(Span::styled(
+                        format!("-{deletions}"),
+                        Style::default()
+                            .fg(style_tokens::ORANGE)
+                            .add_modifier(Modifier::BOLD),
+                    ));
+                }
+            }
         }
 
         // Right-aligned section: cost + context remaining

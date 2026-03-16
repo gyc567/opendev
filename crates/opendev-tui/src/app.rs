@@ -159,6 +159,8 @@ pub struct AppState {
     pub todo_spinner_tick: usize,
     /// Optional plan name for the todo panel title.
     pub plan_name: Option<String>,
+    /// File change stats for current session: (files, additions, deletions).
+    pub file_changes: Option<(usize, u64, u64)>,
     /// Application version string.
     pub version: String,
     /// Animated welcome panel state.
@@ -426,6 +428,7 @@ impl Default for AppState {
             todo_expanded: true,
             todo_spinner_tick: 0,
             plan_name: None,
+            file_changes: None,
             version: String::from("0.1.0"),
             welcome_panel: WelcomePanelState::new(),
             terminal_width: 80,
@@ -1137,7 +1140,8 @@ impl App {
         .context_usage_pct(self.state.context_usage_pct)
         .session_cost(self.state.session_cost)
         .mcp_status(self.state.mcp_status, self.state.mcp_has_errors)
-        .background_tasks(self.state.background_task_count);
+        .background_tasks(self.state.background_task_count)
+        .file_changes(self.state.file_changes);
         frame.render_widget(status, chunks[3]);
 
         // Background task panel overlay (Ctrl+B)
@@ -1574,6 +1578,18 @@ impl App {
                 });
                 self.state.dirty = true;
                 self.state.message_generation += 1;
+            }
+
+            // File change summary events
+            AppEvent::FileChangeSummary {
+                files,
+                additions,
+                deletions,
+            } => {
+                if files > 0 {
+                    self.state.file_changes = Some((files, additions, deletions));
+                }
+                self.state.dirty = true;
             }
 
             // Context usage events
