@@ -1913,6 +1913,7 @@ dependencies = [
  "chrono",
  "criterion",
  "dirs 6.0.0",
+ "futures",
  "opendev-config",
  "opendev-context",
  "opendev-http",

@@ -84,15 +84,21 @@ pub enum AppEvent {
 
     // -- Subagent events --
     /// A subagent started executing.
-    SubagentStarted { subagent_name: String, task: String },
+    SubagentStarted {
+        subagent_id: String,
+        subagent_name: String,
+        task: String,
+    },
     /// A subagent made a tool call (for nested display).
     SubagentToolCall {
+        subagent_id: String,
         subagent_name: String,
         tool_name: String,
         tool_id: String,
     },
     /// A subagent tool call completed.
     SubagentToolComplete {
+        subagent_id: String,
         subagent_name: String,
         tool_name: String,
         tool_id: String,
@@ -100,6 +106,7 @@ pub enum AppEvent {
     },
     /// A subagent finished its task.
     SubagentFinished {
+        subagent_id: String,
         subagent_name: String,
         success: bool,
         result_summary: String,
@@ -108,6 +115,7 @@ pub enum AppEvent {
     },
     /// Token usage update from a subagent's LLM call.
     SubagentTokenUpdate {
+        subagent_id: String,
         subagent_name: String,
         input_tokens: u64,
         output_tokens: u64,
@@ -444,25 +452,29 @@ impl RecordedEvent {
                 }),
             ),
             AppEvent::SubagentStarted {
+                subagent_id,
                 subagent_name,
                 task,
             } => (
                 "SubagentStarted".to_string(),
-                serde_json::json!({"subagent_name": subagent_name, "task": task}),
+                serde_json::json!({"subagent_id": subagent_id, "subagent_name": subagent_name, "task": task}),
             ),
             AppEvent::SubagentToolCall {
+                subagent_id,
                 subagent_name,
                 tool_name,
                 tool_id,
             } => (
                 "SubagentToolCall".to_string(),
                 serde_json::json!({
+                    "subagent_id": subagent_id,
                     "subagent_name": subagent_name,
                     "tool_name": tool_name,
                     "tool_id": tool_id,
                 }),
             ),
             AppEvent::SubagentToolComplete {
+                subagent_id,
                 subagent_name,
                 tool_name,
                 tool_id,
@@ -470,6 +482,7 @@ impl RecordedEvent {
             } => (
                 "SubagentToolComplete".to_string(),
                 serde_json::json!({
+                    "subagent_id": subagent_id,
                     "subagent_name": subagent_name,
                     "tool_name": tool_name,
                     "tool_id": tool_id,
@@ -477,6 +490,7 @@ impl RecordedEvent {
                 }),
             ),
             AppEvent::SubagentFinished {
+                subagent_id,
                 subagent_name,
                 success,
                 result_summary,
@@ -485,6 +499,7 @@ impl RecordedEvent {
             } => (
                 "SubagentFinished".to_string(),
                 serde_json::json!({
+                    "subagent_id": subagent_id,
                     "subagent_name": subagent_name,
                     "success": success,
                     "result_summary": result_summary,
@@ -493,12 +508,14 @@ impl RecordedEvent {
                 }),
             ),
             AppEvent::SubagentTokenUpdate {
+                subagent_id,
                 subagent_name,
                 input_tokens,
                 output_tokens,
             } => (
                 "SubagentTokenUpdate".to_string(),
                 serde_json::json!({
+                    "subagent_id": subagent_id,
                     "subagent_name": subagent_name,
                     "input_tokens": input_tokens,
                     "output_tokens": output_tokens,
@@ -648,29 +665,35 @@ impl RecordedEvent {
                 })
             }
             "SubagentStarted" => {
+                let subagent_id = self.payload.get("subagent_id")?.as_str()?.to_string();
                 let subagent_name = self.payload.get("subagent_name")?.as_str()?.to_string();
                 let task = self.payload.get("task")?.as_str()?.to_string();
                 Some(AppEvent::SubagentStarted {
+                    subagent_id,
                     subagent_name,
                     task,
                 })
             }
             "SubagentToolCall" => {
+                let subagent_id = self.payload.get("subagent_id")?.as_str()?.to_string();
                 let subagent_name = self.payload.get("subagent_name")?.as_str()?.to_string();
                 let tool_name = self.payload.get("tool_name")?.as_str()?.to_string();
                 let tool_id = self.payload.get("tool_id")?.as_str()?.to_string();
                 Some(AppEvent::SubagentToolCall {
+                    subagent_id,
                     subagent_name,
                     tool_name,
                     tool_id,
                 })
             }
             "SubagentToolComplete" => {
+                let subagent_id = self.payload.get("subagent_id")?.as_str()?.to_string();
                 let subagent_name = self.payload.get("subagent_name")?.as_str()?.to_string();
                 let tool_name = self.payload.get("tool_name")?.as_str()?.to_string();
                 let tool_id = self.payload.get("tool_id")?.as_str()?.to_string();
                 let success = self.payload.get("success")?.as_bool()?;
                 Some(AppEvent::SubagentToolComplete {
+                    subagent_id,
                     subagent_name,
                     tool_name,
                     tool_id,
@@ -678,6 +701,7 @@ impl RecordedEvent {
                 })
             }
             "SubagentFinished" => {
+                let subagent_id = self.payload.get("subagent_id")?.as_str()?.to_string();
                 let subagent_name = self.payload.get("subagent_name")?.as_str()?.to_string();
                 let success = self.payload.get("success")?.as_bool()?;
                 let result_summary = self.payload.get("result_summary")?.as_str()?.to_string();
@@ -688,6 +712,7 @@ impl RecordedEvent {
                     .and_then(|v| v.as_str())
                     .map(String::from);
                 Some(AppEvent::SubagentFinished {
+                    subagent_id,
                     subagent_name,
                     success,
                     result_summary,
@@ -696,10 +721,12 @@ impl RecordedEvent {
                 })
             }
             "SubagentTokenUpdate" => {
+                let subagent_id = self.payload.get("subagent_id")?.as_str()?.to_string();
                 let subagent_name = self.payload.get("subagent_name")?.as_str()?.to_string();
                 let input_tokens = self.payload.get("input_tokens")?.as_u64()?;
                 let output_tokens = self.payload.get("output_tokens")?.as_u64()?;
                 Some(AppEvent::SubagentTokenUpdate {
+                    subagent_id,
                     subagent_name,
                     input_tokens,
                     output_tokens,
@@ -951,6 +978,7 @@ mod tests {
         let path = tmp.path().to_path_buf();
 
         let event = AppEvent::SubagentFinished {
+            subagent_id: "sa-1".to_string(),
             subagent_name: "explorer".to_string(),
             success: true,
             result_summary: "Found 3 files".to_string(),
@@ -968,12 +996,14 @@ mod tests {
         let reconstructed = events[0].to_app_event().unwrap();
         match reconstructed {
             AppEvent::SubagentFinished {
+                subagent_id,
                 subagent_name,
                 success,
                 result_summary,
                 tool_call_count,
                 shallow_warning,
             } => {
+                assert_eq!(subagent_id, "sa-1");
                 assert_eq!(subagent_name, "explorer");
                 assert!(success);
                 assert_eq!(result_summary, "Found 3 files");

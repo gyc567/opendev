@@ -217,6 +217,8 @@ pub struct ConversationWidget<'a> {
     compaction_active: bool,
     /// Pre-built cached lines for the static message portion (if available).
     cached_lines: Option<&'a [Line<'static>]>,
+    /// Active subagent executions for nested inline display.
+    active_subagents: &'a [crate::widgets::nested_tool::SubagentDisplayState],
 }
 
 impl<'a> ConversationWidget<'a> {
@@ -232,6 +234,7 @@ impl<'a> ConversationWidget<'a> {
             spinner_char: SPINNER_FRAMES[0],
             compaction_active: false,
             cached_lines: None,
+            active_subagents: &[],
         }
     }
 
@@ -267,6 +270,14 @@ impl<'a> ConversationWidget<'a> {
 
     pub fn compaction_active(mut self, active: bool) -> Self {
         self.compaction_active = active;
+        self
+    }
+
+    pub fn active_subagents(
+        mut self,
+        subagents: &'a [crate::widgets::nested_tool::SubagentDisplayState],
+    ) -> Self {
+        self.active_subagents = subagents;
         self
     }
 
@@ -510,27 +521,150 @@ impl<'a> ConversationWidget<'a> {
             for tool in &active_unfinished {
                 let frame_idx = tool.tick_count % SPINNER_FRAMES.len();
                 let spinner = SPINNER_FRAMES[frame_idx];
-                let (verb, arg) = format_tool_call_parts(&tool.name, &tool.args);
-                lines.push(Line::from(vec![
-                    Span::styled(
-                        format!("{spinner} "),
-                        Style::default().fg(style_tokens::BLUE_BRIGHT),
-                    ),
-                    Span::styled(
-                        verb,
-                        Style::default()
-                            .fg(style_tokens::PRIMARY)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                    Span::styled(
-                        format!("({arg})"),
-                        Style::default().fg(style_tokens::SUBTLE),
-                    ),
-                    Span::styled(
-                        format!(" ({}s)", tool.elapsed_secs),
-                        Style::default().fg(style_tokens::GREY),
-                    ),
-                ]));
+
+                // For spawn_subagent, use Python-style nested display
+                if tool.name == "spawn_subagent" {
+                    // Find matching active subagent
+                    let subagent = self.active_subagents.iter().find(|s| !s.finished);
+                    let (agent_name, task_desc) = if let Some(sa) = subagent {
+                        (sa.name.clone(), sa.task.clone())
+                    } else {
+                        // Fallback from args
+                        let name = tool
+                            .args
+                            .get("agent_type")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("Agent");
+                        let task = tool
+                            .args
+                            .get("task")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
+                        (name.to_string(), task.to_string())
+                    };
+
+                    // Truncate task
+                    let task_short = if task_desc.len() > 60 {
+                        format!("{}...", &task_desc[..60])
+                    } else {
+                        task_desc
+                    };
+
+                    // Header: ⠋ AgentName(task description)
+                    lines.push(Line::from(vec![
+                        Span::styled(
+                            format!("{spinner} "),
+                            Style::default().fg(style_tokens::BLUE_BRIGHT),
+                        ),
+                        Span::styled(
+                            agent_name,
+                            Style::default()
+                                .fg(style_tokens::PRIMARY)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                        Span::styled(
+                            format!("({task_short})"),
+                            Style::default().fg(style_tokens::SUBTLE),
+                        ),
+                    ]));
+
+                    // Nested tool calls under ⎿
+                    if let Some(sa) = subagent {
+                        // Show last 3 completed tools
+                        let start = sa.completed_tools.len().saturating_sub(3);
+                        for ct in &sa.completed_tools[start..] {
+                            let (icon, color) = if ct.success {
+                                (COMPLETED_CHAR, style_tokens::GREEN_BRIGHT)
+                            } else {
+                                ('\u{2717}', style_tokens::ERROR)
+                            };
+                            lines.push(Line::from(vec![
+                                Span::styled(
+                                    format!("  {CONTINUATION_CHAR}  "),
+                                    Style::default().fg(style_tokens::GREY),
+                                ),
+                                Span::styled(
+                                    format!("{icon} "),
+                                    Style::default().fg(color),
+                                ),
+                                Span::styled(
+                                    ct.tool_name.clone(),
+                                    Style::default().fg(style_tokens::SUBTLE),
+                                ),
+                            ]));
+                        }
+
+                        // Show active tools with spinner
+                        for at in sa.active_tools.values() {
+                            let at_idx = at.tick % SPINNER_FRAMES.len();
+                            let at_ch = SPINNER_FRAMES[at_idx];
+                            lines.push(Line::from(vec![
+                                Span::styled(
+                                    format!("  {CONTINUATION_CHAR}  "),
+                                    Style::default().fg(style_tokens::GREY),
+                                ),
+                                Span::styled(
+                                    format!("{at_ch} "),
+                                    Style::default().fg(style_tokens::BLUE_BRIGHT),
+                                ),
+                                Span::styled(
+                                    at.tool_name.clone(),
+                                    Style::default().fg(style_tokens::SUBTLE),
+                                ),
+                            ]));
+                        }
+
+                        // If no tools yet, show initializing
+                        if sa.active_tools.is_empty() && sa.completed_tools.is_empty() {
+                            lines.push(Line::from(vec![
+                                Span::styled(
+                                    format!("  {CONTINUATION_CHAR}  "),
+                                    Style::default().fg(style_tokens::GREY),
+                                ),
+                                Span::styled(
+                                    "Initializing\u{2026}",
+                                    Style::default()
+                                        .fg(style_tokens::SUBTLE)
+                                        .add_modifier(Modifier::ITALIC),
+                                ),
+                            ]));
+                        }
+
+                        // Hidden count
+                        let hidden = sa.completed_tools.len().saturating_sub(3);
+                        if hidden > 0 {
+                            lines.push(Line::from(Span::styled(
+                                format!("      +{hidden} more tool uses"),
+                                Style::default()
+                                    .fg(style_tokens::GREY)
+                                    .add_modifier(Modifier::ITALIC),
+                            )));
+                        }
+                    }
+                } else {
+                    // Normal tool: ⠋ verb(arg) (Xs)
+                    let (verb, arg) = format_tool_call_parts(&tool.name, &tool.args);
+                    lines.push(Line::from(vec![
+                        Span::styled(
+                            format!("{spinner} "),
+                            Style::default().fg(style_tokens::BLUE_BRIGHT),
+                        ),
+                        Span::styled(
+                            verb,
+                            Style::default()
+                                .fg(style_tokens::PRIMARY)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                        Span::styled(
+                            format!("({arg})"),
+                            Style::default().fg(style_tokens::SUBTLE),
+                        ),
+                        Span::styled(
+                            format!(" ({}s)", tool.elapsed_secs),
+                            Style::default().fg(style_tokens::GREY),
+                        ),
+                    ]));
+                }
             }
         } else if let Some(progress) = self.task_progress {
             let elapsed = progress.started_at.elapsed().as_secs();
@@ -562,6 +696,53 @@ fn format_tool_call(tc: &DisplayToolCall) -> Line<'static> {
         (COMPLETED_CHAR, style_tokens::ERROR)
     };
 
+    // For ask_user, display as "⏺ User answered Claude's questions:"
+    if tc.name == "ask_user" {
+        return Line::from(vec![
+            Span::styled(format!("{icon} "), Style::default().fg(icon_color)),
+            Span::styled(
+                "User answered Claude's questions:",
+                Style::default()
+                    .fg(style_tokens::PRIMARY)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]);
+    }
+
+    // For spawn_subagent, display as "⏺ AgentName(task)" instead of raw args
+    if tc.name == "spawn_subagent" {
+        let agent_name = tc
+            .arguments
+            .get("agent_type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Agent")
+            .to_string();
+        let task = tc
+            .arguments
+            .get("task")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let task_short = if task.len() > 60 {
+            format!("{}...", &task[..60])
+        } else {
+            task.to_string()
+        };
+
+        return Line::from(vec![
+            Span::styled(format!("{icon} "), Style::default().fg(icon_color)),
+            Span::styled(
+                agent_name,
+                Style::default()
+                    .fg(style_tokens::PRIMARY)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                format!("({task_short})"),
+                Style::default().fg(style_tokens::SUBTLE),
+            ),
+        ]);
+    }
+
     let (verb, arg) = format_tool_call_parts(&tc.name, &tc.arguments);
 
     Line::from(vec![
@@ -579,32 +760,22 @@ fn format_tool_call(tc: &DisplayToolCall) -> Line<'static> {
     ])
 }
 
-/// Format a nested tool call with tree indent.
-fn format_nested_tool_call(tc: &DisplayToolCall, depth: usize) -> Line<'static> {
-    let indent = Indent::for_depth(depth);
-
+/// Format a nested tool call with ⎿ continuation indent (Python style).
+fn format_nested_tool_call(tc: &DisplayToolCall, _depth: usize) -> Line<'static> {
     let (icon, icon_color) = if tc.success {
         (COMPLETED_CHAR, style_tokens::GREEN_BRIGHT)
     } else {
-        (COMPLETED_CHAR, style_tokens::ERROR)
+        ('\u{2717}', style_tokens::ERROR) // ✗
     };
-
-    let (verb, arg) = format_tool_call_parts(&tc.name, &tc.arguments);
 
     Line::from(vec![
         Span::styled(
-            format!("{indent}\u{2514}\u{2500} "),
-            Style::default().fg(style_tokens::SUBTLE),
+            format!("  {CONTINUATION_CHAR}  "),
+            Style::default().fg(style_tokens::GREY),
         ),
         Span::styled(format!("{icon} "), Style::default().fg(icon_color)),
         Span::styled(
-            verb,
-            Style::default()
-                .fg(style_tokens::PRIMARY)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(
-            format!("({arg})"),
+            tc.name.clone(),
             Style::default().fg(style_tokens::SUBTLE),
         ),
     ])
@@ -985,9 +1156,9 @@ mod tests {
             .flat_map(|l| l.spans.iter())
             .map(|s| s.content.to_string())
             .collect();
-        // Tool calls now use format_tool_call_display: Agent(working...), Read(file)
+        // spawn_subagent renders as AgentName(task), nested calls show tool name
         assert!(text.contains("Agent"));
-        assert!(text.contains("Read"));
+        assert!(text.contains("read_file"));
     }
 
     #[test]

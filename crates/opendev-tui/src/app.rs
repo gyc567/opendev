@@ -18,7 +18,7 @@ use crate::event::{AppEvent, EventHandler};
 use crate::history::CommandHistory;
 use crate::managers::BackgroundTaskManager;
 use crate::widgets::{
-    ConversationWidget, InputWidget, NestedToolWidget, StatusBarWidget, TodoDisplayItem,
+    ConversationWidget, InputWidget, StatusBarWidget, TodoDisplayItem,
     TodoDisplayStatus, TodoPanelWidget, WelcomePanelState, WelcomePanelWidget,
 };
 use crossterm::{
@@ -1024,7 +1024,6 @@ impl App {
         // Layout: conversation (flexible) | todo panel (if active) | subagent display (if active)
         //         | input | status bar
         // Tool spinners and thinking progress are rendered inline in the conversation area.
-        let has_subagents = !self.state.active_subagents.is_empty();
         let has_todos = !self.state.todo_items.is_empty();
         let todo_height: u16 = if has_todos {
             if self.state.todo_expanded {
@@ -1037,26 +1036,12 @@ impl App {
         } else {
             0
         };
-        let subagent_height: u16 = if has_subagents {
-            // Dynamic height: header + 2 lines per subagent + tool lines
-            let lines: u16 = self
-                .state
-                .active_subagents
-                .iter()
-                .map(|s| 1 + s.active_tools.len() as u16 + s.completed_tools.len().min(3) as u16)
-                .sum();
-            (lines + 2).min(12) // Cap at 12 lines
-        } else {
-            0
-        };
-
         let chunks = layout::Layout::default()
             .direction(layout::Direction::Vertical)
             .constraints(
                 [
                     layout::Constraint::Min(5),                  // conversation
                     layout::Constraint::Length(todo_height),     // todo panel
-                    layout::Constraint::Length(subagent_height), // subagent display
                     layout::Constraint::Length({
                         let input_lines = self.state.input_buffer.matches('\n').count() + 1;
                         (input_lines as u16 + 1).min(8) // +1 for separator, cap at 8
@@ -1086,6 +1071,7 @@ impl App {
                     .working_dir(&self.state.working_dir)
                     .mode(mode_str)
                     .active_tools(&self.state.active_tools)
+                    .active_subagents(&self.state.active_subagents)
                     .task_progress(self.state.task_progress.as_ref())
                     .spinner_char(self.state.spinner.current())
                     .compaction_active(self.state.compaction_active);
@@ -1106,12 +1092,6 @@ impl App {
             frame.render_widget(todo_widget, chunks[1]);
         }
 
-        // Subagent display (only if active)
-        if has_subagents {
-            let subagent_display = NestedToolWidget::new(&self.state.active_subagents);
-            frame.render_widget(subagent_display, chunks[2]);
-        }
-
         // Input
         let input = InputWidget::new(
             &self.state.input_buffer,
@@ -1119,26 +1099,26 @@ impl App {
             mode_str,
             self.state.pending_messages.len(),
         );
-        frame.render_widget(input, chunks[3]);
+        frame.render_widget(input, chunks[2]);
 
         // Autocomplete popup (rendered over conversation area)
         if self.state.autocomplete.is_visible() {
-            self.render_autocomplete(frame, chunks[3]);
+            self.render_autocomplete(frame, chunks[2]);
         }
 
         // Plan approval panel (rendered over input area when active)
         if self.plan_approval_controller.active() {
-            self.render_plan_approval(frame, chunks[3]);
+            self.render_plan_approval(frame, chunks[2]);
         }
 
         // Ask-user panel (rendered over input area when active)
         if self.ask_user_controller.active() {
-            self.render_ask_user(frame, chunks[3]);
+            self.render_ask_user(frame, chunks[2]);
         }
 
         // Tool approval panel (rendered over input area when active)
         if self.approval_controller.active() {
-            self.render_approval(frame, chunks[3]);
+            self.render_approval(frame, chunks[2]);
         }
 
         // Status bar
@@ -1156,7 +1136,7 @@ impl App {
         .session_cost(self.state.session_cost)
         .mcp_status(self.state.mcp_status, self.state.mcp_has_errors)
         .background_tasks(self.state.background_task_count);
-        frame.render_widget(status, chunks[4]);
+        frame.render_widget(status, chunks[3]);
 
         // Background task panel overlay (Ctrl+B)
         if self.state.background_panel_open {
@@ -1737,7 +1717,17 @@ impl App {
                     "write_todos" | "update_todo" | "complete_todo" | "list_todos" | "clear_todos"
                 );
 
-                let (display_lines, collapsed) = if is_todo_tool {
+                let (display_lines, collapsed) = if tool_name == "ask_user" {
+                    // Format as "· question → answer"
+                    let question = arguments
+                        .get("question")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("question");
+                    let answer = output
+                        .strip_prefix("User answered: ")
+                        .unwrap_or(&output);
+                    (vec![format!("· {question} → {answer}")], false)
+                } else if is_todo_tool {
                     let summary = crate::formatters::todo_formatter::summarize_todo_result(
                         &tool_name, &output,
                     );
@@ -1757,7 +1747,46 @@ impl App {
                     (lines, collapse)
                 };
 
-                if !display_lines.is_empty() {
+                // For spawn_subagent, populate nested_calls from tracked subagent state
+                let nested_calls = if tool_name == "spawn_subagent" {
+                    // Find the matching finished subagent and extract its tool history
+                    let subagent_idx = self
+                        .state
+                        .active_subagents
+                        .iter()
+                        .position(|s| s.finished);
+                    if let Some(idx) = subagent_idx {
+                        let subagent = self.state.active_subagents.remove(idx);
+                        subagent
+                            .completed_tools
+                            .iter()
+                            .map(|ct| DisplayToolCall {
+                                name: ct.tool_name.clone(),
+                                arguments: std::collections::HashMap::new(),
+                                summary: None,
+                                success: ct.success,
+                                collapsed: false,
+                                result_lines: Vec::new(),
+                                nested_calls: Vec::new(),
+                            })
+                            .collect()
+                    } else {
+                        Vec::new()
+                    }
+                } else {
+                    Vec::new()
+                };
+
+                // For spawn_subagent, show "Done (N tool uses)" summary
+                let (final_lines, final_collapsed) = if tool_name == "spawn_subagent" {
+                    let tool_count = nested_calls.len();
+                    let summary = format!("Done ({tool_count} tool uses)");
+                    (vec![summary], false)
+                } else {
+                    (display_lines, collapsed)
+                };
+
+                if !final_lines.is_empty() || !nested_calls.is_empty() {
                     self.state.messages.push(DisplayMessage {
                         role: DisplayRole::Assistant,
                         content: String::new(),
@@ -1766,9 +1795,9 @@ impl App {
                             arguments,
                             summary: None,
                             success,
-                            collapsed,
-                            result_lines: display_lines,
-                            nested_calls: Vec::new(),
+                            collapsed: final_collapsed,
+                            result_lines: final_lines,
+                            nested_calls,
                         }),
                         collapsed: false,
                     });
@@ -1855,59 +1884,66 @@ impl App {
                 self.state.dirty = true;
             }
 
-            // Subagent events
+            // Subagent events — use subagent_id for lookup to support parallel subagents
             AppEvent::SubagentStarted {
+                subagent_id,
                 subagent_name,
                 task,
             } => {
                 self.state.active_subagents.push(
-                    crate::widgets::nested_tool::SubagentDisplayState::new(subagent_name, task),
+                    crate::widgets::nested_tool::SubagentDisplayState::new(
+                        subagent_id,
+                        subagent_name,
+                        task,
+                    ),
                 );
                 self.state.dirty = true;
             }
             AppEvent::SubagentToolCall {
-                subagent_name,
+                subagent_id,
                 tool_name,
                 tool_id,
+                ..
             } => {
                 if let Some(subagent) = self
                     .state
                     .active_subagents
                     .iter_mut()
-                    .find(|s| s.name == subagent_name && !s.finished)
+                    .find(|s| s.subagent_id == subagent_id)
                 {
                     subagent.add_tool_call(tool_name, tool_id);
                 }
                 self.state.dirty = true;
             }
             AppEvent::SubagentToolComplete {
-                subagent_name,
-                tool_name: _,
+                subagent_id,
                 tool_id,
                 success,
+                ..
             } => {
                 if let Some(subagent) = self
                     .state
                     .active_subagents
                     .iter_mut()
-                    .find(|s| s.name == subagent_name && !s.finished)
+                    .find(|s| s.subagent_id == subagent_id)
                 {
                     subagent.complete_tool_call(&tool_id, success);
                 }
                 self.state.dirty = true;
             }
             AppEvent::SubagentFinished {
-                subagent_name,
+                subagent_id,
                 success,
                 result_summary,
                 tool_call_count,
                 shallow_warning,
+                ..
             } => {
                 if let Some(subagent) = self
                     .state
                     .active_subagents
                     .iter_mut()
-                    .find(|s| s.name == subagent_name && !s.finished)
+                    .find(|s| s.subagent_id == subagent_id)
                 {
                     subagent.finish(success, result_summary, tool_call_count, shallow_warning);
                 }
@@ -1917,15 +1953,16 @@ impl App {
             }
 
             AppEvent::SubagentTokenUpdate {
-                subagent_name,
+                subagent_id,
                 input_tokens,
                 output_tokens,
+                ..
             } => {
                 if let Some(subagent) = self
                     .state
                     .active_subagents
                     .iter_mut()
-                    .find(|s| s.name == subagent_name && !s.finished)
+                    .find(|s| s.subagent_id == subagent_id)
                 {
                     subagent.add_tokens(input_tokens, output_tokens);
                 }
@@ -2010,6 +2047,18 @@ impl App {
                 self.state.task_progress = None;
                 // Clear active tools
                 self.state.active_tools.clear();
+                // Mark any active subagents as interrupted and clear
+                for subagent in &mut self.state.active_subagents {
+                    if !subagent.finished {
+                        subagent.finish(
+                            false,
+                            "Interrupted".to_string(),
+                            subagent.tool_call_count,
+                            None,
+                        );
+                    }
+                }
+                self.state.active_subagents.clear();
                 // Show interrupt feedback in the conversation
                 self.state.messages.push(DisplayMessage {
                     role: DisplayRole::Interrupt,

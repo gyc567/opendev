@@ -37,6 +37,8 @@ const GREEN_GRADIENT: &[Color] = &[
 /// State tracking for a single subagent execution.
 #[derive(Debug, Clone)]
 pub struct SubagentDisplayState {
+    /// Unique identifier for this subagent instance.
+    pub subagent_id: String,
     /// Subagent name.
     pub name: String,
     /// Task description.
@@ -65,8 +67,9 @@ pub struct SubagentDisplayState {
 
 impl SubagentDisplayState {
     /// Create a new subagent display state.
-    pub fn new(name: String, task: String) -> Self {
+    pub fn new(subagent_id: String, name: String, task: String) -> Self {
         Self {
+            subagent_id,
             name,
             task,
             started_at: Instant::now(),
@@ -109,6 +112,10 @@ impl SubagentDisplayState {
                 elapsed: state.started_at.elapsed(),
                 success,
             });
+            // Cap completed tools to prevent unbounded growth in long-running subagents
+            if self.completed_tools.len() > 100 {
+                self.completed_tools.drain(..self.completed_tools.len() - 100);
+            }
         }
     }
 
@@ -138,6 +145,42 @@ impl SubagentDisplayState {
     /// Elapsed time since start.
     pub fn elapsed_secs(&self) -> u64 {
         self.started_at.elapsed().as_secs()
+    }
+
+    /// Generate a summary of current activity.
+    pub fn activity_summary(&self) -> String {
+        if self.active_tools.is_empty() {
+            if self.finished {
+                return "Done".to_string();
+            }
+            return "Running...".to_string();
+        }
+
+        // Count active tool types
+        let mut read_count = 0usize;
+        let mut search_count = 0usize;
+        let mut other_name = None;
+        for tool in self.active_tools.values() {
+            match tool.tool_name.as_str() {
+                "read_file" | "read_pdf" => read_count += 1,
+                "search" | "list_files" | "find_symbol" | "find_referencing_symbols" => {
+                    search_count += 1
+                }
+                name => other_name = Some(name.to_string()),
+            }
+        }
+
+        if read_count > 1 {
+            format!("Reading {} files...", read_count)
+        } else if search_count > 1 {
+            format!("Searching for {} patterns...", search_count)
+        } else if let Some(name) = other_name {
+            format!("{name}...")
+        } else if read_count == 1 {
+            "Reading...".to_string()
+        } else {
+            "Running...".to_string()
+        }
     }
 }
 
@@ -222,6 +265,34 @@ impl Widget for NestedToolWidget<'_> {
                 subagent.task.clone()
             };
 
+            // Format elapsed as Xm Ys or Xs
+            let elapsed_str = if elapsed >= 60 {
+                format!("{}m {}s", elapsed / 60, elapsed % 60)
+            } else {
+                format!("{elapsed}s")
+            };
+
+            // Format token count
+            let token_str = if subagent.token_count > 0 {
+                let k = subagent.token_count as f64 / 1000.0;
+                format!(" \u{00b7} {k:.1}k tokens")
+            } else {
+                String::new()
+            };
+
+            // Build stats suffix
+            let stats = if subagent.finished {
+                format!(
+                    " ({} tool uses{} \u{00b7} {})",
+                    subagent.tool_call_count, token_str, elapsed_str
+                )
+            } else {
+                format!(
+                    " ({} tool uses{} \u{00b7} {})",
+                    subagent.tool_call_count, token_str, elapsed_str
+                )
+            };
+
             lines.push(Line::from(vec![
                 Span::styled(
                     format!(" {connector} "),
@@ -238,10 +309,7 @@ impl Widget for NestedToolWidget<'_> {
                     format!(": {task_preview}"),
                     Style::default().fg(style_tokens::SUBTLE),
                 ),
-                Span::styled(
-                    format!(" ({elapsed}s)"),
-                    Style::default().fg(style_tokens::SUBTLE),
-                ),
+                Span::styled(stats, Style::default().fg(style_tokens::SUBTLE)),
             ]));
 
             // Show active tool calls
@@ -340,7 +408,7 @@ mod tests {
 
     #[test]
     fn test_subagent_display_state_new() {
-        let state = SubagentDisplayState::new("Code-Explorer".into(), "Find TODOs".into());
+        let state = SubagentDisplayState::new("id-1".into(), "Code-Explorer".into(), "Find TODOs".into());
         assert_eq!(state.name, "Code-Explorer");
         assert!(!state.finished);
         assert_eq!(state.tool_call_count, 0);
@@ -348,7 +416,7 @@ mod tests {
 
     #[test]
     fn test_add_and_complete_tool_call() {
-        let mut state = SubagentDisplayState::new("test".into(), "task".into());
+        let mut state = SubagentDisplayState::new("id-test".into(), "test".into(), "task".into());
         state.add_tool_call("read_file".into(), "tc-1".into());
         assert_eq!(state.tool_call_count, 1);
         assert!(state.active_tools.contains_key("tc-1"));
@@ -361,7 +429,7 @@ mod tests {
 
     #[test]
     fn test_finish() {
-        let mut state = SubagentDisplayState::new("test".into(), "task".into());
+        let mut state = SubagentDisplayState::new("id-test".into(), "test".into(), "task".into());
         state.finish(true, "Done".into(), 3, None);
         assert!(state.finished);
         assert!(state.success);
@@ -371,7 +439,7 @@ mod tests {
 
     #[test]
     fn test_finish_with_shallow_warning() {
-        let mut state = SubagentDisplayState::new("test".into(), "task".into());
+        let mut state = SubagentDisplayState::new("id-test".into(), "test".into(), "task".into());
         state.finish(
             true,
             "Done".into(),
@@ -383,7 +451,7 @@ mod tests {
 
     #[test]
     fn test_advance_tick() {
-        let mut state = SubagentDisplayState::new("test".into(), "task".into());
+        let mut state = SubagentDisplayState::new("id-test".into(), "test".into(), "task".into());
         state.add_tool_call("read_file".into(), "tc-1".into());
         state.advance_tick();
         assert_eq!(state.tick, 1);
@@ -398,15 +466,69 @@ mod tests {
 
     #[test]
     fn test_widget_with_active_subagent() {
-        let mut state = SubagentDisplayState::new("Code-Explorer".into(), "Find TODOs".into());
+        let mut state = SubagentDisplayState::new("id-1".into(), "Code-Explorer".into(), "Find TODOs".into());
         state.add_tool_call("read_file".into(), "tc-1".into());
         let subagents = vec![state];
         let _widget = NestedToolWidget::new(&subagents);
     }
 
     #[test]
+    fn test_token_accumulation() {
+        let mut state = SubagentDisplayState::new("id-tok".into(), "test".into(), "task".into());
+        assert_eq!(state.token_count, 0);
+        state.add_tokens(1000, 500);
+        assert_eq!(state.token_count, 1500);
+        state.add_tokens(2000, 300);
+        assert_eq!(state.token_count, 3800);
+    }
+
+    #[test]
+    fn test_completed_tools_cap() {
+        let mut state = SubagentDisplayState::new("id-cap".into(), "test".into(), "task".into());
+        // Add 150 tool calls and complete them all
+        for i in 0..150 {
+            let id = format!("tc-{i}");
+            state.add_tool_call("read_file".into(), id.clone());
+            state.complete_tool_call(&id, true);
+        }
+        // Should be capped at 100
+        assert_eq!(state.completed_tools.len(), 100);
+        assert_eq!(state.tool_call_count, 150);
+    }
+
+    #[test]
+    fn test_activity_summary_reading() {
+        let mut state = SubagentDisplayState::new("id-act".into(), "test".into(), "task".into());
+        state.add_tool_call("read_file".into(), "tc-1".into());
+        state.add_tool_call("read_file".into(), "tc-2".into());
+        state.add_tool_call("read_file".into(), "tc-3".into());
+        assert_eq!(state.activity_summary(), "Reading 3 files...");
+    }
+
+    #[test]
+    fn test_activity_summary_searching() {
+        let mut state = SubagentDisplayState::new("id-act2".into(), "test".into(), "task".into());
+        state.add_tool_call("search".into(), "tc-1".into());
+        state.add_tool_call("list_files".into(), "tc-2".into());
+        assert_eq!(state.activity_summary(), "Searching for 2 patterns...");
+    }
+
+    #[test]
+    fn test_activity_summary_running() {
+        let state = SubagentDisplayState::new("id-act3".into(), "test".into(), "task".into());
+        assert_eq!(state.activity_summary(), "Running...");
+    }
+
+    #[test]
+    fn test_activity_summary_done() {
+        let mut state = SubagentDisplayState::new("id-act4".into(), "test".into(), "task".into());
+        state.finish(true, "Done".into(), 0, None);
+        assert_eq!(state.activity_summary(), "Done");
+    }
+
+    #[test]
     fn test_widget_with_finished_subagent() {
-        let mut state = SubagentDisplayState::new("Planner".into(), "Create plan".into());
+        let mut state = SubagentDisplayState::new("id-2".into(), "Planner".into(), "Create plan".into());
         state.add_tool_call("read_file".into(), "tc-1".into());
         state.complete_tool_call("tc-1", true);
         state.add_tool_call("write_file".into(), "tc-2".into());

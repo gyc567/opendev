@@ -166,39 +166,47 @@ impl TuiRunner {
                     while let Some(evt) = subagent_rx.recv().await {
                         let app_event = match evt {
                             SubagentEvent::Started {
+                                subagent_id,
                                 subagent_name,
                                 task,
                             } => AppEvent::SubagentStarted {
+                                subagent_id,
                                 subagent_name,
                                 task,
                             },
                             SubagentEvent::ToolCall {
+                                subagent_id,
                                 subagent_name,
                                 tool_name,
                                 tool_id,
                             } => AppEvent::SubagentToolCall {
+                                subagent_id,
                                 subagent_name,
                                 tool_name,
                                 tool_id,
                             },
                             SubagentEvent::ToolComplete {
+                                subagent_id,
                                 subagent_name,
                                 tool_name,
                                 tool_id,
                                 success,
                             } => AppEvent::SubagentToolComplete {
+                                subagent_id,
                                 subagent_name,
                                 tool_name,
                                 tool_id,
                                 success,
                             },
                             SubagentEvent::Finished {
+                                subagent_id,
                                 subagent_name,
                                 success,
                                 result_summary,
                                 tool_call_count,
                                 shallow_warning,
                             } => AppEvent::SubagentFinished {
+                                subagent_id,
                                 subagent_name,
                                 success,
                                 result_summary,
@@ -206,10 +214,12 @@ impl TuiRunner {
                                 shallow_warning,
                             },
                             SubagentEvent::TokenUpdate {
+                                subagent_id,
                                 subagent_name,
                                 input_tokens,
                                 output_tokens,
                             } => AppEvent::SubagentTokenUpdate {
+                                subagent_id,
                                 subagent_name,
                                 input_tokens,
                                 output_tokens,

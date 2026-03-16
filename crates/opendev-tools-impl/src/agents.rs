@@ -210,6 +210,7 @@ impl std::fmt::Debug for ChannelProgressCallback {
 impl opendev_agents::SubagentProgressCallback for ChannelProgressCallback {
     fn on_started(&self, subagent_name: &str, task: &str) {
         let _ = self.tx.send(SubagentEvent::Started {
+            subagent_id: self.subagent_id.clone(),
             subagent_name: subagent_name.to_string(),
             task: task.to_string(),
         });
@@ -217,6 +218,7 @@ impl opendev_agents::SubagentProgressCallback for ChannelProgressCallback {
 
     fn on_tool_call(&self, subagent_name: &str, tool_name: &str, tool_id: &str) {
         let _ = self.tx.send(SubagentEvent::ToolCall {
+            subagent_id: self.subagent_id.clone(),
             subagent_name: subagent_name.to_string(),
             tool_name: tool_name.to_string(),
             tool_id: tool_id.to_string(),
@@ -225,6 +227,7 @@ impl opendev_agents::SubagentProgressCallback for ChannelProgressCallback {
 
     fn on_tool_complete(&self, subagent_name: &str, tool_name: &str, tool_id: &str, success: bool) {
         let _ = self.tx.send(SubagentEvent::ToolComplete {
+            subagent_id: self.subagent_id.clone(),
             subagent_name: subagent_name.to_string(),
             tool_name: tool_name.to_string(),
             tool_id: tool_id.to_string(),
@@ -234,6 +237,7 @@ impl opendev_agents::SubagentProgressCallback for ChannelProgressCallback {
 
     fn on_finished(&self, subagent_name: &str, success: bool, result_summary: &str) {
         let _ = self.tx.send(SubagentEvent::Finished {
+            subagent_id: self.subagent_id.clone(),
             subagent_name: subagent_name.to_string(),
             success,
             result_summary: result_summary.to_string(),
@@ -244,6 +248,7 @@ impl opendev_agents::SubagentProgressCallback for ChannelProgressCallback {
 
     fn on_token_usage(&self, subagent_name: &str, input_tokens: u64, output_tokens: u64) {
         let _ = self.tx.send(SubagentEvent::TokenUpdate {
+            subagent_id: self.subagent_id.clone(),
             subagent_name: subagent_name.to_string(),
             input_tokens,
             output_tokens,
@@ -396,10 +401,13 @@ impl BaseTool for SpawnSubagentTool {
             .map(|id| id.to_string())
             .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
+        // Unique ID for this subagent instance (disambiguates parallel subagents)
+        let subagent_id = uuid::Uuid::new_v4().to_string();
+
         // Create progress callback
         let progress: Arc<dyn opendev_agents::SubagentProgressCallback> =
             if let Some(ref tx) = self.event_tx {
-                Arc::new(ChannelProgressCallback::new(tx.clone()))
+                Arc::new(ChannelProgressCallback::new(tx.clone(), subagent_id.clone()))
             } else {
                 Arc::new(opendev_agents::NoopProgressCallback)
             };
@@ -455,6 +463,7 @@ impl BaseTool for SpawnSubagentTool {
                 // Send finished event with full details
                 if let Some(ref tx) = self.event_tx {
                     let _ = tx.send(SubagentEvent::Finished {
+                        subagent_id: subagent_id.clone(),
                         subagent_name: agent_type.to_string(),
                         success: run_result.agent_result.success,
                         result_summary: if output.len() > 200 {
@@ -679,12 +688,14 @@ mod tests {
     #[test]
     fn test_subagent_event_variants() {
         let started = SubagentEvent::Started {
+            subagent_id: "id-1".into(),
             subagent_name: "Code-Explorer".into(),
             task: "Find all TODO comments".into(),
         };
         assert!(matches!(started, SubagentEvent::Started { .. }));
 
         let finished = SubagentEvent::Finished {
+            subagent_id: "id-1".into(),
             subagent_name: "Code-Explorer".into(),
             success: true,
             result_summary: "Found 5 TODOs".into(),
@@ -697,7 +708,7 @@ mod tests {
     #[tokio::test]
     async fn test_channel_progress_callback() {
         let (tx, mut rx) = mpsc::unbounded_channel();
-        let cb = ChannelProgressCallback::new(tx);
+        let cb = ChannelProgressCallback::new(tx, "test-id".into());
 
         use opendev_agents::SubagentProgressCallback;
         cb.on_started("test-agent", "do a thing");
@@ -713,6 +724,58 @@ mod tests {
         assert!(matches!(evt, SubagentEvent::ToolComplete { .. }));
         let evt = rx.recv().await.unwrap();
         assert!(matches!(evt, SubagentEvent::Finished { .. }));
+    }
+
+    #[tokio::test]
+    async fn test_bridge_to_channel_end_to_end() {
+        // Verify the full chain: SubagentEventBridge → ChannelProgressCallback → channel
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let subagent_id = "test-sa-id".to_string();
+        let cb: Arc<dyn opendev_agents::SubagentProgressCallback> =
+            Arc::new(ChannelProgressCallback::new(tx, subagent_id.clone()));
+
+        // Create bridge (as SubagentManager::spawn would)
+        let bridge = opendev_agents::SubagentEventBridge::new("Explorer".to_string(), cb);
+
+        // Simulate react loop calling the bridge
+        use opendev_agents::AgentEventCallback;
+        let args = std::collections::HashMap::new();
+        bridge.on_tool_started("tc-1", "read_file", &args);
+        bridge.on_tool_finished("tc-1", true);
+        bridge.on_token_usage(500, 100);
+
+        // Verify events arrive on the channel
+        let evt = rx.recv().await.unwrap();
+        match evt {
+            SubagentEvent::ToolCall {
+                subagent_id: id,
+                subagent_name,
+                tool_name,
+                tool_id,
+            } => {
+                assert_eq!(id, "test-sa-id");
+                assert_eq!(subagent_name, "Explorer");
+                assert_eq!(tool_name, "read_file");
+                assert_eq!(tool_id, "tc-1");
+            }
+            other => panic!("Expected ToolCall, got {other:?}"),
+        }
+
+        let evt = rx.recv().await.unwrap();
+        assert!(matches!(evt, SubagentEvent::ToolComplete { .. }));
+
+        let evt = rx.recv().await.unwrap();
+        match evt {
+            SubagentEvent::TokenUpdate {
+                input_tokens,
+                output_tokens,
+                ..
+            } => {
+                assert_eq!(input_tokens, 500);
+                assert_eq!(output_tokens, 100);
+            }
+            other => panic!("Expected TokenUpdate, got {other:?}"),
+        }
     }
 
     #[tokio::test]

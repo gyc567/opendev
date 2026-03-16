@@ -23,6 +23,7 @@ async-trait = { workspace = true }
 tracing = { workspace = true }
 thiserror = { workspace = true }
 regex = { workspace = true }
+futures = { workspace = true }
 dirs = "6"
 
 [dev-dependencies]

@@ -6,7 +6,7 @@
 
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use tracing::{Instrument, debug, info, info_span, warn};
 
@@ -1088,6 +1088,144 @@ impl ReactLoop {
                     }
 
                     // Execute tool calls
+                    // Detect if all calls are spawn_subagent — run them in parallel
+                    let all_subagents = tool_calls.len() > 1
+                        && tool_calls.iter().all(|tc| {
+                            tc.get("function")
+                                .and_then(|f| f.get("name"))
+                                .and_then(|n| n.as_str())
+                                == Some("spawn_subagent")
+                        });
+
+                    if all_subagents {
+                        // Parallel subagent execution path using futures::join_all
+                        // (no spawning needed — references are valid for the duration)
+                        let max_parallel: usize = 5;
+                        let semaphore = Arc::new(tokio::sync::Semaphore::new(max_parallel));
+
+                        // Build futures for each tool call
+                        let futures: Vec<_> = tool_calls
+                            .iter()
+                            .map(|tc| {
+                                let tool_call_id = tc
+                                    .get("id")
+                                    .and_then(|id| id.as_str())
+                                    .unwrap_or("unknown")
+                                    .to_string();
+                                let tool_name = tc
+                                    .get("function")
+                                    .and_then(|f| f.get("name"))
+                                    .and_then(|n| n.as_str())
+                                    .unwrap_or("unknown")
+                                    .to_string();
+                                let args_str = tc
+                                    .get("function")
+                                    .and_then(|f| f.get("arguments"))
+                                    .and_then(|a| a.as_str())
+                                    .unwrap_or("{}");
+                                let args_value: Value =
+                                    serde_json::from_str(args_str).unwrap_or(serde_json::json!({}));
+                                let args_map: std::collections::HashMap<String, Value> = args_value
+                                    .as_object()
+                                    .map(|obj| {
+                                        obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+                                    })
+                                    .unwrap_or_default();
+
+                                if let Some(cb) = event_callback {
+                                    cb.on_tool_started(&tool_call_id, &tool_name, &args_map);
+                                }
+
+                                let exec_ctx = match cancel {
+                                    Some(ct) => {
+                                        let mut ctx = tool_context.clone();
+                                        ctx.cancel_token = Some(ct.child_token());
+                                        ctx
+                                    }
+                                    None => tool_context.clone(),
+                                };
+                                let sem = Arc::clone(&semaphore);
+
+                                async move {
+                                    let _permit = sem.acquire().await;
+                                    let result = tool_registry
+                                        .execute(&tool_name, args_map, &exec_ctx)
+                                        .await;
+                                    (tool_call_id, tool_name, result)
+                                }
+                            })
+                            .collect();
+
+                        // Execute all in parallel, collect results
+                        let results = futures::future::join_all(futures).await;
+
+                        let mut _any_tool_failed = false;
+                        for (tc_id, t_name, tool_result) in results {
+                            if let Some(cb) = event_callback {
+                                let output_str = if tool_result.success {
+                                    tool_result.output.as_deref().unwrap_or("")
+                                } else {
+                                    tool_result
+                                        .error
+                                        .as_deref()
+                                        .unwrap_or("Tool execution failed")
+                                };
+                                cb.on_tool_result(&tc_id, &t_name, output_str, tool_result.success);
+                                cb.on_tool_finished(&tc_id, tool_result.success);
+                            }
+
+                            if !tool_result.success {
+                                _any_tool_failed = true;
+                            }
+
+                            let result_value = if tool_result.success {
+                                serde_json::json!({
+                                    "success": true,
+                                    "output": tool_result.output.as_deref().unwrap_or(""),
+                                })
+                            } else {
+                                serde_json::json!({
+                                    "success": false,
+                                    "error": tool_result.error.as_deref()
+                                        .unwrap_or("Tool execution failed"),
+                                })
+                            };
+
+                            let formatted = Self::format_tool_result(&t_name, &result_value);
+                            messages.push(serde_json::json!({
+                                "role": "tool",
+                                "tool_call_id": tc_id,
+                                "name": t_name,
+                                "content": formatted,
+                            }));
+                        }
+
+                        // Check for interrupt after parallel execution
+                        let interrupted_by_monitor =
+                            task_monitor.is_some_and(|m| m.should_interrupt());
+                        let interrupted_by_cancel = cancel.is_some_and(|c| c.is_cancelled());
+                        if interrupted_by_monitor || interrupted_by_cancel {
+                            let partial = PartialResult::from_interrupted_state(
+                                messages,
+                                response.content.as_deref(),
+                                iteration,
+                                tool_calls.len(),
+                                tool_calls.len(),
+                            );
+                            iter_metrics.total_duration_ms =
+                                iter_start.elapsed().as_millis() as u64;
+                            self.push_metrics(iter_metrics);
+                            let mut result = AgentResult::interrupted(messages.clone());
+                            result.partial_result = Some(partial);
+                            return Ok(result);
+                        }
+
+                        // Skip the sequential loop below
+                        iter_metrics.total_duration_ms = iter_start.elapsed().as_millis() as u64;
+                        self.push_metrics(iter_metrics);
+                        continue;
+                    }
+
                     let total_tool_count = tool_calls.len();
                     let mut completed_tool_count: usize = 0;
                     let mut any_tool_failed = false;
