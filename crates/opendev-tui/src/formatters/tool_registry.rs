@@ -487,13 +487,14 @@ pub fn format_tool_call_display(
 ///
 /// E.g., `/Users/me/project/src/main.rs` with working_dir `/Users/me/project` → `src/main.rs`
 fn make_relative(path: &str, working_dir: Option<&str>) -> String {
-    if let Some(wd) = working_dir {
-        if !wd.is_empty() && path.starts_with(wd) {
-            let rel = path.strip_prefix(wd).unwrap_or(path);
-            let rel = rel.strip_prefix('/').unwrap_or(rel);
-            if !rel.is_empty() {
-                return rel.to_string();
-            }
+    if let Some(wd) = working_dir
+        && !wd.is_empty()
+        && path.starts_with(wd)
+    {
+        let rel = path.strip_prefix(wd).unwrap_or(path);
+        let rel = rel.strip_prefix('/').unwrap_or(rel);
+        if !rel.is_empty() {
+            return rel.to_string();
         }
     }
     path.to_string()

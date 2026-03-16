@@ -305,17 +305,10 @@ impl Widget for NestedToolWidget<'_> {
             };
 
             // Build stats suffix
-            let stats = if subagent.finished {
-                format!(
-                    " ({} tool uses{} \u{00b7} {})",
-                    subagent.tool_call_count, token_str, elapsed_str
-                )
-            } else {
-                format!(
-                    " ({} tool uses{} \u{00b7} {})",
-                    subagent.tool_call_count, token_str, elapsed_str
-                )
-            };
+            let stats = format!(
+                " ({} tool uses{} \u{00b7} {})",
+                subagent.tool_call_count, token_str, elapsed_str
+            );
 
             lines.push(Line::from(vec![
                 Span::styled(

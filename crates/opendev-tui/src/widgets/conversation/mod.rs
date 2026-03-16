@@ -3,6 +3,17 @@
 //! Renders the conversation history with role-colored prefixes,
 //! tool call summaries, thinking traces, system-reminder filtering,
 //! collapsible tool results, and scroll support.
+//!
+//! This module is split into focused sub-modules:
+//! - [`diff`] — Unified diff parsing and styled rendering
+//! - [`spinner`] — Active tool spinner and progress line rendering
+//! - [`tool_format`] — Tool call formatting helpers
+
+mod diff;
+mod spinner;
+mod tool_format;
+
+pub use diff::{DiffEntry, DiffEntryType, is_diff_tool, parse_unified_diff, render_diff_entries};
 
 use std::borrow::Cow;
 
@@ -20,185 +31,15 @@ use crate::app::{DisplayMessage, DisplayRole, DisplayToolCall, RoleStyle, ToolEx
 use crate::formatters::display::strip_system_reminders;
 use crate::formatters::markdown::MarkdownRenderer;
 use crate::formatters::style_tokens::{self, Indent};
-use crate::formatters::tool_registry::{categorize_tool, format_tool_call_parts_with_wd};
+use crate::formatters::tool_registry::categorize_tool;
 use crate::widgets::progress::TaskProgress;
-use crate::widgets::spinner::{COMPACTION_CHAR, COMPLETED_CHAR, CONTINUATION_CHAR, SPINNER_FRAMES};
+use crate::widgets::spinner::{COMPLETED_CHAR, CONTINUATION_CHAR, SPINNER_FRAMES};
 
-/// Check if a tool name is an edit/write tool that produces diffs.
-pub fn is_diff_tool(name: &str) -> bool {
-    matches!(name, "edit_file" | "write_file")
-}
-
-/// Type of a parsed diff entry.
-#[derive(Debug, Clone, PartialEq)]
-pub enum DiffEntryType {
-    Add,
-    Del,
-    Ctx,
-}
-
-/// A single parsed diff entry with line number and content.
-#[derive(Debug, Clone)]
-pub struct DiffEntry {
-    pub entry_type: DiffEntryType,
-    pub line_no: Option<usize>,
-    pub content: String,
-}
-
-/// Reformat the summary line from the edit tool output.
-///
-/// Transforms e.g. `"Edited file.rs: 1 replacement(s), 2 addition(s) and 1 removal(s)"`
-/// into `"Added 2 lines, removed 1 line"`.
-fn reformat_summary(summary: &str) -> String {
-    // Try to extract addition/removal counts from the summary
-    let additions = extract_count(summary, "addition");
-    let removals = extract_count(summary, "removal");
-
-    if additions.is_none() && removals.is_none() {
-        return summary.to_string();
-    }
-
-    let mut parts = Vec::new();
-    if let Some(a) = additions.filter(|&a| a > 0) {
-        let word = if a == 1 { "line" } else { "lines" };
-        parts.push(format!("Added {a} {word}"));
-    }
-    if let Some(r) = removals.filter(|&r| r > 0) {
-        let word = if r == 1 { "line" } else { "lines" };
-        parts.push(format!("removed {r} {word}"));
-    }
-    if parts.is_empty() {
-        return summary.to_string();
-    }
-    parts.join(", ")
-}
-
-/// Extract a count preceding a keyword like "addition" or "removal" from text.
-fn extract_count(text: &str, keyword: &str) -> Option<usize> {
-    let idx = text.find(keyword)?;
-    let before = text[..idx].trim_end();
-    before
-        .rsplit_once(|c: char| !c.is_ascii_digit())
-        .map(|(_, n)| n)
-        .or(Some(before))
-        .and_then(|n| n.parse().ok())
-}
-
-/// Parse unified diff text into structured entries with line numbers.
-///
-/// Returns (summary, entries) where summary is the first line (reformatted)
-/// and entries are the parsed diff lines with line numbers.
-pub fn parse_unified_diff(result_lines: &[String]) -> (String, Vec<DiffEntry>) {
-    let mut entries = Vec::new();
-    let mut summary = String::new();
-    let mut old_line: usize = 0;
-    let mut new_line: usize = 0;
-    let mut seen_header = false;
-
-    for (i, line) in result_lines.iter().enumerate() {
-        if i == 0 {
-            // First line is the summary
-            summary = reformat_summary(line);
-            continue;
-        }
-
-        // Skip file headers
-        if line.starts_with("--- ") || line.starts_with("+++ ") {
-            continue;
-        }
-
-        // Parse hunk header
-        if line.starts_with("@@") {
-            seen_header = true;
-            // Parse @@ -X,N +Y,M @@
-            if let Some(rest) = line.strip_prefix("@@ -") {
-                let parts: Vec<&str> = rest.splitn(2, '+').collect();
-                if parts.len() == 2 {
-                    // Parse old line number
-                    if let Some(num_str) = parts[0].split(',').next() {
-                        old_line = num_str.trim().parse().unwrap_or(1);
-                    }
-                    // Parse new line number
-                    if let Some(num_part) = parts[1].split("@@").next()
-                        && let Some(num_str) = num_part.split(',').next()
-                    {
-                        new_line = num_str.trim().parse().unwrap_or(1);
-                    }
-                }
-            }
-            continue;
-        }
-
-        if !seen_header {
-            continue;
-        }
-
-        if let Some(content) = line.strip_prefix('+') {
-            entries.push(DiffEntry {
-                entry_type: DiffEntryType::Add,
-                line_no: Some(new_line),
-                content: content.to_string(),
-            });
-            new_line += 1;
-        } else if let Some(content) = line.strip_prefix('-') {
-            entries.push(DiffEntry {
-                entry_type: DiffEntryType::Del,
-                line_no: Some(old_line),
-                content: content.to_string(),
-            });
-            old_line += 1;
-        } else {
-            // Context line — strip leading space if present
-            let content = line.strip_prefix(' ').unwrap_or(line);
-            entries.push(DiffEntry {
-                entry_type: DiffEntryType::Ctx,
-                line_no: Some(old_line),
-                content: content.to_string(),
-            });
-            old_line += 1;
-            new_line += 1;
-        }
-    }
-
-    (summary, entries)
-}
-
-/// Render parsed diff entries as styled lines with right-aligned line numbers.
-///
-/// Add/del lines get a background color (green for additions, red for deletions).
-/// The background is extended to fill the full row width by a post-render buffer
-/// scan in `Widget::render()`.
-pub fn render_diff_entries(entries: &[DiffEntry], lines: &mut Vec<Line<'_>>) {
-    for entry in entries {
-        let line_no_str = match entry.line_no {
-            Some(n) => format!("{n:>4} "),
-            None => "     ".to_string(),
-        };
-        let content = entry.content.replace('\t', "    ");
-
-        let (operator, color, bg) = match entry.entry_type {
-            DiffEntryType::Add => ("+ ", style_tokens::SUCCESS, Some(style_tokens::DIFF_ADD_BG)),
-            DiffEntryType::Del => ("- ", style_tokens::ERROR, Some(style_tokens::DIFF_DEL_BG)),
-            DiffEntryType::Ctx => ("  ", style_tokens::SUBTLE, None),
-        };
-
-        let content_str = format!("{operator}{content}");
-
-        let line_no_style = match bg {
-            Some(c) => Style::default().fg(style_tokens::SUBTLE).bg(c),
-            None => Style::default().fg(style_tokens::SUBTLE),
-        };
-        let content_style = match bg {
-            Some(c) => Style::default().fg(color).bg(c),
-            None => Style::default().fg(color),
-        };
-
-        lines.push(Line::from(vec![
-            Span::styled(line_no_str, line_no_style),
-            Span::styled(content_str, content_style),
-        ]));
-    }
-}
+use diff::{
+    is_diff_tool as check_diff_tool, parse_unified_diff as parse_diff,
+    render_diff_entries as render_diff,
+};
+use tool_format::{format_nested_tool_call, format_tool_call};
 
 /// Widget that renders the conversation log.
 pub struct ConversationWidget<'a> {
@@ -409,163 +250,7 @@ impl<'a> ConversationWidget<'a> {
 
             // Tool call summary with color coding
             if let Some(ref tc) = msg.tool_call {
-                if tc.name == "spawn_subagent_group" {
-                    // Grouped parallel subagent display:
-                    // ⏺ 3 Explore agents finished (ctrl+o to expand)
-                    //    ├─ Explore auth flow · 25 tool uses · 54.8k tokens
-                    //    │  ⎿  Done
-                    //    └─ Explore UI and tools · 46 tool uses · 62.3k tokens
-                    //       ⎿  Done
-                    let count = tc
-                        .arguments
-                        .get("count")
-                        .and_then(|v| v.as_u64())
-                        .unwrap_or(0);
-                    let agent_type = tc
-                        .arguments
-                        .get("agent_type")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("Explore");
-
-                    lines.push(Line::from(vec![
-                        Span::styled(
-                            format!("{COMPLETED_CHAR} "),
-                            Style::default().fg(style_tokens::GREEN_BRIGHT),
-                        ),
-                        Span::styled(
-                            format!("{count} {agent_type} agents finished"),
-                            Style::default()
-                                .fg(style_tokens::PRIMARY)
-                                .add_modifier(Modifier::BOLD),
-                        ),
-                    ]));
-
-                    let total = tc.nested_calls.len();
-                    for (i, child) in tc.nested_calls.iter().enumerate() {
-                        let is_last = i == total - 1;
-                        let task = child
-                            .arguments
-                            .get("task")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("?");
-                        let stats = child
-                            .arguments
-                            .get("stats")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("");
-
-                        let (branch, cont_prefix) = if is_last {
-                            ("\u{2514}\u{2500} ", "   ") // └─ , "   "
-                        } else {
-                            ("\u{251c}\u{2500} ", "\u{2502}  ") // ├─ , │
-                        };
-
-                        // Task + stats line
-                        lines.push(Line::from(vec![
-                            Span::styled(
-                                format!("   {branch}"),
-                                Style::default().fg(style_tokens::GREY),
-                            ),
-                            Span::styled(
-                                task.to_string(),
-                                Style::default()
-                                    .fg(style_tokens::PRIMARY)
-                                    .add_modifier(Modifier::BOLD),
-                            ),
-                            Span::styled(
-                                format!(" \u{00b7} {stats}"),
-                                Style::default().fg(style_tokens::SUBTLE),
-                            ),
-                        ]));
-
-                        // Done line under it
-                        let (icon, color) = if child.success {
-                            (COMPLETED_CHAR, style_tokens::GREEN_BRIGHT)
-                        } else {
-                            ('\u{2717}', style_tokens::ERROR)
-                        };
-                        let done_text = child.summary.as_deref().unwrap_or("Done");
-                        lines.push(Line::from(vec![
-                            Span::styled(
-                                format!("   {cont_prefix}{CONTINUATION_CHAR}  "),
-                                Style::default().fg(style_tokens::GREY),
-                            ),
-                            Span::styled(format!("{icon} "), Style::default().fg(color)),
-                            Span::styled(
-                                done_text.to_string(),
-                                Style::default().fg(style_tokens::SUBTLE),
-                            ),
-                        ]));
-                    }
-                } else {
-                    let tool_line = format_tool_call(tc, Some(self.working_dir));
-                    lines.push(tool_line);
-
-                    // Collapsible result lines (diff tools are never collapsed)
-                    let effective_collapsed = tc.collapsed && !is_diff_tool(&tc.name);
-                    if !effective_collapsed && !tc.result_lines.is_empty() {
-                        let use_diff = is_diff_tool(&tc.name);
-                        if use_diff {
-                            let (summary, entries) = parse_unified_diff(&tc.result_lines);
-                            // Summary line with ⎿ prefix
-                            if !summary.is_empty() {
-                                lines.push(Line::from(vec![
-                                    Span::styled(
-                                        format!("  {}  ", CONTINUATION_CHAR),
-                                        Style::default().fg(style_tokens::GREY),
-                                    ),
-                                    Span::styled(
-                                        summary,
-                                        Style::default().fg(style_tokens::SUBTLE),
-                                    ),
-                                ]));
-                            }
-                            render_diff_entries(&entries, &mut lines);
-                        } else {
-                            for (i, result_line) in tc.result_lines.iter().enumerate() {
-                                let prefix_char: Cow<'static, str> = if i == 0 {
-                                    format!("  {}  ", CONTINUATION_CHAR).into()
-                                } else {
-                                    Cow::Borrowed(Indent::RESULT_CONT)
-                                };
-                                lines.push(Line::from(vec![
-                                    Span::styled(
-                                        prefix_char,
-                                        Style::default().fg(style_tokens::SUBTLE),
-                                    ),
-                                    Span::styled(
-                                        result_line.clone(),
-                                        Style::default().fg(style_tokens::SUBTLE),
-                                    ),
-                                ]));
-                            }
-                        }
-                    } else if effective_collapsed && !tc.result_lines.is_empty() {
-                        // Show collapsed indicator — read tools get a short summary
-                        let count = tc.result_lines.len();
-                        let is_read = categorize_tool(&tc.name)
-                            == crate::formatters::tool_registry::ToolCategory::FileRead;
-                        let label = if is_read {
-                            format!("  {}  ({count} lines)", CONTINUATION_CHAR)
-                        } else {
-                            format!(
-                                "  {}  ({count} lines collapsed, press Ctrl+O to expand)",
-                                CONTINUATION_CHAR,
-                            )
-                        };
-                        lines.push(Line::from(Span::styled(
-                            label,
-                            Style::default().fg(style_tokens::SUBTLE),
-                        )));
-                    }
-
-                    // Nested tool calls (from subagent execution)
-                    for nested in &tc.nested_calls {
-                        let nested_line =
-                            format_nested_tool_call(nested, 1, Some(self.working_dir));
-                        lines.push(nested_line);
-                    }
-                }
+                self.build_tool_call_lines(tc, &mut lines);
             }
 
             // Blank line between messages — skip before messages that attach to previous
@@ -582,416 +267,158 @@ impl<'a> ConversationWidget<'a> {
         lines
     }
 
-    /// Build spinner/progress lines separately from message content.
-    ///
-    /// These are rendered outside the scrollable area so that spinner
-    /// animation (60ms ticks) doesn't shift scroll math or cause jitter.
-    fn build_spinner_lines(&self) -> Vec<Line<'a>> {
-        let mut lines: Vec<Line> = Vec::new();
+    /// Build lines for a tool call (grouped subagent or regular tool).
+    fn build_tool_call_lines(&self, tc: &DisplayToolCall, lines: &mut Vec<Line<'a>>) {
+        if tc.name == "spawn_subagent_group" {
+            self.build_grouped_subagent_lines(tc, lines);
+        } else {
+            let tool_line = format_tool_call(tc, Some(self.working_dir));
+            lines.push(tool_line);
 
-        let active_unfinished: Vec<_> = self
-            .active_tools
-            .iter()
-            .filter(|t| !t.is_finished())
-            .collect();
-
-        if self.compaction_active {
-            // Compaction spinner: ✻ Compacting conversation…
-            lines.push(Line::from(vec![
-                Span::styled(
-                    format!("{} ", COMPACTION_CHAR),
-                    Style::default()
-                        .fg(style_tokens::BLUE_BRIGHT)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(
-                    "Compacting conversation\u{2026}",
-                    Style::default()
-                        .fg(style_tokens::SUBTLE)
-                        .add_modifier(Modifier::ITALIC),
-                ),
-            ]));
-        } else if !active_unfinished.is_empty() {
-            for tool in &active_unfinished {
-                let frame_idx = tool.tick_count % SPINNER_FRAMES.len();
-                let spinner = SPINNER_FRAMES[frame_idx];
-
-                // For spawn_subagent, use Python-style nested display
-                if tool.name == "spawn_subagent" {
-                    // Match by task text: each subagent has a unique task string.
-                    // Don't filter by !finished — we need to show subagents in the gap
-                    // between SubagentFinished and ToolFinished events.
-                    let tool_task = tool.args.get("task").and_then(|v| v.as_str()).unwrap_or("");
-                    let subagent = self.active_subagents.iter().find(|s| s.task == tool_task);
-                    let (agent_name, task_desc) = if let Some(sa) = subagent {
-                        (sa.name.clone(), sa.task.clone())
-                    } else {
-                        let name = tool
-                            .args
-                            .get("agent_type")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("Agent");
-                        let task = tool.args.get("task").and_then(|v| v.as_str()).unwrap_or("");
-                        (name.to_string(), task.to_string())
-                    };
-
-                    let task_short = if task_desc.len() > 60 {
-                        format!("{}...", &task_desc[..60])
-                    } else {
-                        task_desc
-                    };
-
-                    // Check if multiple parallel subagents are active
-                    let spawn_count = active_unfinished
-                        .iter()
-                        .filter(|t| t.name == "spawn_subagent")
-                        .count();
-                    let is_parallel = spawn_count > 1;
-
-                    // Header: ⠋ AgentName(task description)
-                    lines.push(Line::from(vec![
-                        Span::styled(
-                            format!("{spinner} "),
-                            Style::default().fg(style_tokens::BLUE_BRIGHT),
-                        ),
-                        Span::styled(
-                            agent_name,
-                            Style::default()
-                                .fg(style_tokens::PRIMARY)
-                                .add_modifier(Modifier::BOLD),
-                        ),
-                        Span::styled(
-                            format!("({task_short})"),
-                            Style::default().fg(style_tokens::SUBTLE),
-                        ),
-                    ]));
-
-                    if let Some(sa) = subagent {
-                        if is_parallel {
-                            if sa.finished {
-                                // Subagent finished but tool not yet — show Done summary
-                                let tool_count = sa.tool_call_count;
-                                let count_str = if tool_count > 0 {
-                                    format!(" ({tool_count} tool uses)")
-                                } else {
-                                    String::new()
-                                };
-                                lines.push(Line::from(vec![
-                                    Span::styled(
-                                        format!("  {CONTINUATION_CHAR}  "),
-                                        Style::default().fg(style_tokens::GREY),
-                                    ),
-                                    Span::styled(
-                                        format!("{COMPLETED_CHAR} "),
-                                        Style::default().fg(style_tokens::GREEN_BRIGHT),
-                                    ),
-                                    Span::styled("Done", Style::default().fg(style_tokens::SUBTLE)),
-                                    Span::styled(
-                                        count_str,
-                                        Style::default()
-                                            .fg(style_tokens::GREY)
-                                            .add_modifier(Modifier::ITALIC),
-                                    ),
-                                ]));
-                            } else if let Some(at) = sa.active_tools.values().next() {
-                                let at_idx = at.tick % SPINNER_FRAMES.len();
-                                let at_ch = SPINNER_FRAMES[at_idx];
-                                let (verb, arg) = format_tool_call_parts_with_wd(
-                                    &at.tool_name,
-                                    &at.args,
-                                    Some(self.working_dir),
-                                );
-                                let count_str = if sa.completed_tools.is_empty() {
-                                    String::new()
-                                } else {
-                                    format!(" +{} more", sa.completed_tools.len())
-                                };
-                                lines.push(Line::from(vec![
-                                    Span::styled(
-                                        format!("  {CONTINUATION_CHAR}  "),
-                                        Style::default().fg(style_tokens::GREY),
-                                    ),
-                                    Span::styled(
-                                        format!("{at_ch} "),
-                                        Style::default().fg(style_tokens::BLUE_BRIGHT),
-                                    ),
-                                    Span::styled(verb, Style::default().fg(style_tokens::SUBTLE)),
-                                    Span::styled(
-                                        format!("({arg})"),
-                                        Style::default().fg(style_tokens::GREY),
-                                    ),
-                                    Span::styled(
-                                        count_str,
-                                        Style::default()
-                                            .fg(style_tokens::GREY)
-                                            .add_modifier(Modifier::ITALIC),
-                                    ),
-                                ]));
-                            } else if let Some(ct) = sa.completed_tools.last() {
-                                let (icon, color) = if ct.success {
-                                    (COMPLETED_CHAR, style_tokens::GREEN_BRIGHT)
-                                } else {
-                                    ('\u{2717}', style_tokens::ERROR)
-                                };
-                                let (verb, arg) = format_tool_call_parts_with_wd(
-                                    &ct.tool_name,
-                                    &ct.args,
-                                    Some(self.working_dir),
-                                );
-                                let hidden = sa.completed_tools.len().saturating_sub(1);
-                                let count_str = if hidden > 0 {
-                                    format!(" +{hidden} more")
-                                } else {
-                                    String::new()
-                                };
-                                lines.push(Line::from(vec![
-                                    Span::styled(
-                                        format!("  {CONTINUATION_CHAR}  "),
-                                        Style::default().fg(style_tokens::GREY),
-                                    ),
-                                    Span::styled(format!("{icon} "), Style::default().fg(color)),
-                                    Span::styled(verb, Style::default().fg(style_tokens::SUBTLE)),
-                                    Span::styled(
-                                        format!("({arg})"),
-                                        Style::default().fg(style_tokens::GREY),
-                                    ),
-                                    Span::styled(
-                                        count_str,
-                                        Style::default()
-                                            .fg(style_tokens::GREY)
-                                            .add_modifier(Modifier::ITALIC),
-                                    ),
-                                ]));
-                            } else {
-                                lines.push(Line::from(vec![
-                                    Span::styled(
-                                        format!("  {CONTINUATION_CHAR}  "),
-                                        Style::default().fg(style_tokens::GREY),
-                                    ),
-                                    Span::styled(
-                                        "Initializing\u{2026}",
-                                        Style::default()
-                                            .fg(style_tokens::SUBTLE)
-                                            .add_modifier(Modifier::ITALIC),
-                                    ),
-                                ]));
-                            }
-                        } else if sa.finished {
-                            // Single subagent finished but tool not yet — show Done summary
-                            let tool_count = sa.tool_call_count;
-                            let count_str = if tool_count > 0 {
-                                format!(" ({tool_count} tool uses)")
-                            } else {
-                                String::new()
-                            };
-                            lines.push(Line::from(vec![
-                                Span::styled(
-                                    format!("  {CONTINUATION_CHAR}  "),
-                                    Style::default().fg(style_tokens::GREY),
-                                ),
-                                Span::styled(
-                                    format!("{COMPLETED_CHAR} "),
-                                    Style::default().fg(style_tokens::GREEN_BRIGHT),
-                                ),
-                                Span::styled("Done", Style::default().fg(style_tokens::SUBTLE)),
-                                Span::styled(
-                                    count_str,
-                                    Style::default()
-                                        .fg(style_tokens::GREY)
-                                        .add_modifier(Modifier::ITALIC),
-                                ),
-                            ]));
-                        } else {
-                            // Single subagent: show full nested tool calls
-                            let start = sa.completed_tools.len().saturating_sub(3);
-                            for ct in &sa.completed_tools[start..] {
-                                let (icon, color) = if ct.success {
-                                    (COMPLETED_CHAR, style_tokens::GREEN_BRIGHT)
-                                } else {
-                                    ('\u{2717}', style_tokens::ERROR)
-                                };
-                                let (verb, arg) = format_tool_call_parts_with_wd(
-                                    &ct.tool_name,
-                                    &ct.args,
-                                    Some(self.working_dir),
-                                );
-                                lines.push(Line::from(vec![
-                                    Span::styled(
-                                        format!("  {CONTINUATION_CHAR}  "),
-                                        Style::default().fg(style_tokens::GREY),
-                                    ),
-                                    Span::styled(format!("{icon} "), Style::default().fg(color)),
-                                    Span::styled(verb, Style::default().fg(style_tokens::SUBTLE)),
-                                    Span::styled(
-                                        format!("({arg})"),
-                                        Style::default().fg(style_tokens::GREY),
-                                    ),
-                                ]));
-                            }
-
-                            for at in sa.active_tools.values() {
-                                let at_idx = at.tick % SPINNER_FRAMES.len();
-                                let at_ch = SPINNER_FRAMES[at_idx];
-                                let (verb, arg) = format_tool_call_parts_with_wd(
-                                    &at.tool_name,
-                                    &at.args,
-                                    Some(self.working_dir),
-                                );
-                                lines.push(Line::from(vec![
-                                    Span::styled(
-                                        format!("  {CONTINUATION_CHAR}  "),
-                                        Style::default().fg(style_tokens::GREY),
-                                    ),
-                                    Span::styled(
-                                        format!("{at_ch} "),
-                                        Style::default().fg(style_tokens::BLUE_BRIGHT),
-                                    ),
-                                    Span::styled(verb, Style::default().fg(style_tokens::SUBTLE)),
-                                    Span::styled(
-                                        format!("({arg})"),
-                                        Style::default().fg(style_tokens::GREY),
-                                    ),
-                                ]));
-                            }
-
-                            if sa.active_tools.is_empty() && sa.completed_tools.is_empty() {
-                                lines.push(Line::from(vec![
-                                    Span::styled(
-                                        format!("  {CONTINUATION_CHAR}  "),
-                                        Style::default().fg(style_tokens::GREY),
-                                    ),
-                                    Span::styled(
-                                        "Initializing\u{2026}",
-                                        Style::default()
-                                            .fg(style_tokens::SUBTLE)
-                                            .add_modifier(Modifier::ITALIC),
-                                    ),
-                                ]));
-                            }
-
-                            let hidden = sa.completed_tools.len().saturating_sub(3);
-                            if hidden > 0 {
-                                lines.push(Line::from(Span::styled(
-                                    format!("      +{hidden} more tool uses"),
-                                    Style::default()
-                                        .fg(style_tokens::GREY)
-                                        .add_modifier(Modifier::ITALIC),
-                                )));
-                            }
-                        }
+            // Collapsible result lines (diff tools are never collapsed)
+            let effective_collapsed = tc.collapsed && !check_diff_tool(&tc.name);
+            if !effective_collapsed && !tc.result_lines.is_empty() {
+                let use_diff = check_diff_tool(&tc.name);
+                if use_diff {
+                    let (summary, entries) = parse_diff(&tc.result_lines);
+                    // Summary line with ⎿ prefix
+                    if !summary.is_empty() {
+                        lines.push(Line::from(vec![
+                            Span::styled(
+                                format!("  {}  ", CONTINUATION_CHAR),
+                                Style::default().fg(style_tokens::GREY),
+                            ),
+                            Span::styled(summary, Style::default().fg(style_tokens::SUBTLE)),
+                        ]));
                     }
+                    render_diff(entries.as_slice(), lines);
                 } else {
-                    // Normal tool: ⠋ verb(arg) (Xs)
-                    let (verb, arg) = format_tool_call_parts_with_wd(
-                        &tool.name,
-                        &tool.args,
-                        Some(self.working_dir),
-                    );
-                    lines.push(Line::from(vec![
-                        Span::styled(
-                            format!("{spinner} "),
-                            Style::default().fg(style_tokens::BLUE_BRIGHT),
-                        ),
-                        Span::styled(
-                            verb,
-                            Style::default()
-                                .fg(style_tokens::PRIMARY)
-                                .add_modifier(Modifier::BOLD),
-                        ),
-                        Span::styled(
-                            format!("({arg})"),
-                            Style::default().fg(style_tokens::SUBTLE),
-                        ),
-                        Span::styled(
-                            format!(" ({}s)", tool.elapsed_secs),
-                            Style::default().fg(style_tokens::GREY),
-                        ),
-                    ]));
+                    for (i, result_line) in tc.result_lines.iter().enumerate() {
+                        let prefix_char: Cow<'static, str> = if i == 0 {
+                            format!("  {}  ", CONTINUATION_CHAR).into()
+                        } else {
+                            Cow::Borrowed(Indent::RESULT_CONT)
+                        };
+                        lines.push(Line::from(vec![
+                            Span::styled(prefix_char, Style::default().fg(style_tokens::SUBTLE)),
+                            Span::styled(
+                                result_line.clone(),
+                                Style::default().fg(style_tokens::SUBTLE),
+                            ),
+                        ]));
+                    }
                 }
+            } else if effective_collapsed && !tc.result_lines.is_empty() {
+                // Show collapsed indicator — read tools get a short summary
+                let count = tc.result_lines.len();
+                let is_read = categorize_tool(&tc.name)
+                    == crate::formatters::tool_registry::ToolCategory::FileRead;
+                let label = if is_read {
+                    format!("  {}  ({count} lines)", CONTINUATION_CHAR)
+                } else {
+                    format!(
+                        "  {}  ({count} lines collapsed, press Ctrl+O to expand)",
+                        CONTINUATION_CHAR,
+                    )
+                };
+                lines.push(Line::from(Span::styled(
+                    label,
+                    Style::default().fg(style_tokens::SUBTLE),
+                )));
             }
-        } else if let Some(progress) = self.task_progress {
-            let elapsed = progress.started_at.elapsed().as_secs();
-            lines.push(Line::from(vec![
-                Span::styled(
-                    format!("{} ", self.spinner_char),
-                    Style::default().fg(style_tokens::BLUE_BRIGHT),
-                ),
-                Span::styled(
-                    format!("{}... ", progress.description),
-                    Style::default().fg(style_tokens::SUBTLE),
-                ),
-                Span::styled(
-                    format!("({}s \u{00b7} esc to interrupt)", elapsed),
-                    Style::default().fg(style_tokens::SUBTLE),
-                ),
-            ]));
+
+            // Nested tool calls (from subagent execution)
+            for nested in &tc.nested_calls {
+                let nested_line = format_nested_tool_call(nested, 1, Some(self.working_dir));
+                lines.push(nested_line);
+            }
         }
-
-        lines
     }
-}
 
-/// Format a tool call as a styled line with category color coding.
-fn format_tool_call(tc: &DisplayToolCall, working_dir: Option<&str>) -> Line<'static> {
-    let (icon, icon_color) = if tc.success {
-        (COMPLETED_CHAR, style_tokens::GREEN_BRIGHT)
-    } else {
-        (COMPLETED_CHAR, style_tokens::ERROR)
-    };
+    /// Build lines for a grouped parallel subagent display.
+    fn build_grouped_subagent_lines(&self, tc: &DisplayToolCall, lines: &mut Vec<Line<'a>>) {
+        let count = tc
+            .arguments
+            .get("count")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        let agent_type = tc
+            .arguments
+            .get("agent_type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Explore");
 
-    // For ask_user, display as "⏺ User answered Claude's questions:"
-    if tc.name == "ask_user" {
-        return Line::from(vec![
-            Span::styled(format!("{icon} "), Style::default().fg(icon_color)),
+        lines.push(Line::from(vec![
             Span::styled(
-                "User answered Claude's questions:",
+                format!("{COMPLETED_CHAR} "),
+                Style::default().fg(style_tokens::GREEN_BRIGHT),
+            ),
+            Span::styled(
+                format!("{count} {agent_type} agents finished"),
                 Style::default()
                     .fg(style_tokens::PRIMARY)
                     .add_modifier(Modifier::BOLD),
             ),
-        ]);
+        ]));
+
+        let total = tc.nested_calls.len();
+        for (i, child) in tc.nested_calls.iter().enumerate() {
+            let is_last = i == total - 1;
+            let task = child
+                .arguments
+                .get("task")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
+            let stats = child
+                .arguments
+                .get("stats")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+
+            let (branch, cont_prefix) = if is_last {
+                ("\u{2514}\u{2500} ", "   ") // └─ , "   "
+            } else {
+                ("\u{251c}\u{2500} ", "\u{2502}  ") // ├─ , │
+            };
+
+            // Task + stats line
+            lines.push(Line::from(vec![
+                Span::styled(
+                    format!("   {branch}"),
+                    Style::default().fg(style_tokens::GREY),
+                ),
+                Span::styled(
+                    task.to_string(),
+                    Style::default()
+                        .fg(style_tokens::PRIMARY)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    format!(" \u{00b7} {stats}"),
+                    Style::default().fg(style_tokens::SUBTLE),
+                ),
+            ]));
+
+            // Done line under it
+            let (icon, color) = if child.success {
+                (COMPLETED_CHAR, style_tokens::GREEN_BRIGHT)
+            } else {
+                ('\u{2717}', style_tokens::ERROR)
+            };
+            let done_text = child.summary.as_deref().unwrap_or("Done");
+            lines.push(Line::from(vec![
+                Span::styled(
+                    format!("   {cont_prefix}{CONTINUATION_CHAR}  "),
+                    Style::default().fg(style_tokens::GREY),
+                ),
+                Span::styled(format!("{icon} "), Style::default().fg(color)),
+                Span::styled(
+                    done_text.to_string(),
+                    Style::default().fg(style_tokens::SUBTLE),
+                ),
+            ]));
+        }
     }
-
-    let (verb, arg) = format_tool_call_parts_with_wd(&tc.name, &tc.arguments, working_dir);
-
-    Line::from(vec![
-        Span::styled(format!("{icon} "), Style::default().fg(icon_color)),
-        Span::styled(
-            verb,
-            Style::default()
-                .fg(style_tokens::PRIMARY)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(
-            format!("({arg})"),
-            Style::default().fg(style_tokens::SUBTLE),
-        ),
-    ])
-}
-
-/// Format a nested tool call with ⎿ continuation indent (Python style).
-fn format_nested_tool_call(
-    tc: &DisplayToolCall,
-    _depth: usize,
-    working_dir: Option<&str>,
-) -> Line<'static> {
-    let (icon, icon_color) = if tc.success {
-        (COMPLETED_CHAR, style_tokens::GREEN_BRIGHT)
-    } else {
-        ('\u{2717}', style_tokens::ERROR) // ✗
-    };
-
-    let (verb, arg) = format_tool_call_parts_with_wd(&tc.name, &tc.arguments, working_dir);
-
-    Line::from(vec![
-        Span::styled(
-            format!("  {CONTINUATION_CHAR}  "),
-            Style::default().fg(style_tokens::GREY),
-        ),
-        Span::styled(format!("{icon} "), Style::default().fg(icon_color)),
-        Span::styled(verb, Style::default().fg(style_tokens::SUBTLE)),
-        Span::styled(format!("({arg})"), Style::default().fg(style_tokens::GREY)),
-    ])
 }
 
 impl Widget for ConversationWidget<'_> {
@@ -1705,45 +1132,6 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_unified_diff_line_numbers() {
-        let result_lines = vec![
-            "Edited file.rs: 1 replacement(s), 2 addition(s) and 1 removal(s)".to_string(),
-            "--- a/file.rs".to_string(),
-            "+++ b/file.rs".to_string(),
-            "@@ -201,5 +201,6 @@".to_string(),
-            " context line".to_string(),
-            "-old line".to_string(),
-            "+new line 1".to_string(),
-            "+new line 2".to_string(),
-            " trailing context".to_string(),
-        ];
-        let (summary, entries) = parse_unified_diff(&result_lines);
-
-        assert_eq!(summary, "Added 2 lines, removed 1 line");
-        assert_eq!(entries.len(), 5);
-
-        // Context line at 201
-        assert_eq!(entries[0].entry_type, DiffEntryType::Ctx);
-        assert_eq!(entries[0].line_no, Some(201));
-        assert_eq!(entries[0].content, "context line");
-
-        // Deletion at 202
-        assert_eq!(entries[1].entry_type, DiffEntryType::Del);
-        assert_eq!(entries[1].line_no, Some(202));
-        assert_eq!(entries[1].content, "old line");
-
-        // Additions at 202, 203
-        assert_eq!(entries[2].entry_type, DiffEntryType::Add);
-        assert_eq!(entries[2].line_no, Some(202));
-        assert_eq!(entries[3].entry_type, DiffEntryType::Add);
-        assert_eq!(entries[3].line_no, Some(203));
-
-        // Trailing context at 203 (old), 204 (new)
-        assert_eq!(entries[4].entry_type, DiffEntryType::Ctx);
-        assert_eq!(entries[4].line_no, Some(203));
-    }
-
-    #[test]
     fn test_diff_rendering_with_line_numbers() {
         let msgs = vec![DisplayMessage {
             role: DisplayRole::Assistant,
@@ -1832,22 +1220,6 @@ mod tests {
         assert!(
             text.contains("+ new line"),
             "edit_file should show diff content even when collapsed=true"
-        );
-    }
-
-    #[test]
-    fn test_reformat_summary() {
-        assert_eq!(
-            reformat_summary("Edited file.rs: 1 replacement(s), 2 addition(s) and 1 removal(s)"),
-            "Added 2 lines, removed 1 line"
-        );
-        assert_eq!(
-            reformat_summary("Edited file.rs: 1 replacement(s), 0 addition(s) and 3 removal(s)"),
-            "removed 3 lines"
-        );
-        assert_eq!(
-            reformat_summary("Some unknown format"),
-            "Some unknown format"
         );
     }
 
