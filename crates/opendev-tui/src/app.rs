@@ -1749,11 +1749,8 @@ impl App {
                     (lines, collapse)
                 };
 
-                // For spawn_subagent, populate nested_calls from tracked subagent state
-                let (nested_calls, subagent_stats) = if tool_name == "spawn_subagent" {
-                    // Find the matching subagent (finished or not — the Finished event
-                    // may not have been processed yet, but tool_call_count is already
-                    // tracked via add_tool_call())
+                // For spawn_subagent, extract stats from tracked subagent state
+                let subagent_stats = if tool_name == "spawn_subagent" {
                     let subagent_idx = self
                         .state
                         .active_subagents
@@ -1761,30 +1758,16 @@ impl App {
                         .position(|_| true);
                     if let Some(idx) = subagent_idx {
                         let subagent = self.state.active_subagents.remove(idx);
-                        let stats = (
+                        Some((
                             subagent.tool_call_count,
                             subagent.token_count,
                             subagent.started_at.elapsed(),
-                        );
-                        let calls = subagent
-                            .completed_tools
-                            .iter()
-                            .map(|ct| DisplayToolCall {
-                                name: ct.tool_name.clone(),
-                                arguments: ct.args.clone(),
-                                summary: None,
-                                success: ct.success,
-                                collapsed: false,
-                                result_lines: Vec::new(),
-                                nested_calls: Vec::new(),
-                            })
-                            .collect();
-                        (calls, Some(stats))
+                        ))
                     } else {
-                        (Vec::new(), None)
+                        None
                     }
                 } else {
-                    (Vec::new(), None)
+                    None
                 };
 
                 // For spawn_subagent, show "Done (N tool uses · Xk tokens · Ym Zs)" summary
@@ -1804,15 +1787,14 @@ impl App {
                         };
                         format!("Done ({tool_count} tool uses{token_str} \u{00b7} {elapsed_str})")
                     } else {
-                        let tool_count = nested_calls.len();
-                        format!("Done ({tool_count} tool uses)")
+                        "Done".to_string()
                     };
                     (vec![summary], false)
                 } else {
                     (display_lines, collapsed)
                 };
 
-                if !final_lines.is_empty() || !nested_calls.is_empty() {
+                if !final_lines.is_empty() {
                     self.state.messages.push(DisplayMessage {
                         role: DisplayRole::Assistant,
                         content: String::new(),
@@ -1823,7 +1805,7 @@ impl App {
                             success,
                             collapsed: final_collapsed,
                             result_lines: final_lines,
-                            nested_calls,
+                            nested_calls: Vec::new(),
                         }),
                         collapsed: false,
                     });
