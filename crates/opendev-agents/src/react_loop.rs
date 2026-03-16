@@ -926,10 +926,10 @@ impl ReactLoop {
             }
 
             // Emit token usage event to callback
-            if let Some(cb) = event_callback {
-                if input_tokens > 0 || output_tokens > 0 {
-                    cb.on_token_usage(input_tokens, output_tokens);
-                }
+            if let Some(cb) = event_callback
+                && (input_tokens > 0 || output_tokens > 0)
+            {
+                cb.on_token_usage(input_tokens, output_tokens);
             }
 
             // Record cost tracking

@@ -635,7 +635,7 @@ impl SubagentManager {
             tool_context: &tool_context,
             event_callback: Some(bridge.as_ref() as &dyn crate::traits::AgentEventCallback),
             cancel: None, // Subagents don't support cancellation tokens yet
-            tool_approval_tx: tool_approval_tx,
+            tool_approval_tx,
         };
 
         // Run the isolated ReAct loop via the selected runner

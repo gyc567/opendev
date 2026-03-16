@@ -219,10 +219,10 @@ impl SimpleReactRunner {
 
                 match name {
                     "read_file" => {
-                        if let Some(path) = args.get("file_path").and_then(|v| v.as_str()) {
-                            if !files_read.contains(&path.to_string()) {
-                                files_read.push(path.to_string());
-                            }
+                        if let Some(path) = args.get("file_path").and_then(|v| v.as_str())
+                            && !files_read.contains(&path.to_string())
+                        {
+                            files_read.push(path.to_string());
                         }
                     }
                     "search" => {
@@ -340,16 +340,14 @@ impl SimpleReactRunner {
             if let Ok(rel) = path.strip_prefix(working_dir) {
                 let rel_str = rel.to_string_lossy();
                 // Check for redundant basename: /wd/basename/rest → rest
-                if let Some(basename) = working_dir.file_name().and_then(|n| n.to_str()) {
-                    if let Ok(inner) = rel.strip_prefix(basename) {
-                        let inner_str = inner.to_string_lossy();
-                        if !inner_str.is_empty() {
-                            let joined = working_dir.join(&*inner_str);
-                            if joined.exists()
-                                || joined.parent().map(|p| p.is_dir()).unwrap_or(false)
-                            {
-                                return inner_str.to_string();
-                            }
+                if let Some(basename) = working_dir.file_name().and_then(|n| n.to_str())
+                    && let Ok(inner) = rel.strip_prefix(basename)
+                {
+                    let inner_str = inner.to_string_lossy();
+                    if !inner_str.is_empty() {
+                        let joined = working_dir.join(&*inner_str);
+                        if joined.exists() || joined.parent().map(|p| p.is_dir()).unwrap_or(false) {
+                            return inner_str.to_string();
                         }
                     }
                 }
@@ -361,17 +359,15 @@ impl SimpleReactRunner {
         }
 
         // Relative path: check if first component matches working dir basename
-        if let Some(basename) = working_dir.file_name().and_then(|n| n.to_str()) {
-            if let Some(rest) = path_str
+        if let Some(basename) = working_dir.file_name().and_then(|n| n.to_str())
+            && let Some(rest) = path_str
                 .strip_prefix(basename)
                 .and_then(|r| r.strip_prefix('/'))
-            {
-                if !rest.is_empty() {
-                    let joined = working_dir.join(rest);
-                    if joined.exists() || joined.parent().map(|p| p.is_dir()).unwrap_or(false) {
-                        return rest.to_string();
-                    }
-                }
+            && !rest.is_empty()
+        {
+            let joined = working_dir.join(rest);
+            if joined.exists() || joined.parent().map(|p| p.is_dir()).unwrap_or(false) {
+                return rest.to_string();
             }
         }
 
@@ -404,18 +400,18 @@ impl SubagentRunner for SimpleReactRunner {
 
         for iteration in 1..=self.max_iterations {
             // Check cancellation
-            if let Some(cancel) = ctx.cancel {
-                if cancel.is_cancelled() {
-                    info!(iteration, "SimpleReactRunner: cancelled");
-                    return Ok(AgentResult {
-                        content: "Interrupted.".to_string(),
-                        success: true,
-                        interrupted: true,
-                        completion_status: None,
-                        messages: messages.clone(),
-                        partial_result: None,
-                    });
-                }
+            if let Some(cancel) = ctx.cancel
+                && cancel.is_cancelled()
+            {
+                info!(iteration, "SimpleReactRunner: cancelled");
+                return Ok(AgentResult {
+                    content: "Interrupted.".to_string(),
+                    success: true,
+                    interrupted: true,
+                    completion_status: None,
+                    messages: messages.clone(),
+                    partial_result: None,
+                });
             }
 
             debug!(
@@ -591,65 +587,63 @@ impl SubagentRunner for SimpleReactRunner {
                     // Tool approval gate for run_command (mirrors ReactLoop behavior)
                     let needs_approval =
                         name == "run_command" && !auto_approved_patterns.contains(&name);
-                    if needs_approval {
-                        if let Some(approval_tx) = ctx.tool_approval_tx {
-                            let command = args
-                                .get("command")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("")
-                                .to_string();
-                            let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
-                            let req = opendev_runtime::ToolApprovalRequest {
-                                tool_name: name.clone(),
-                                command: command.clone(),
-                                working_dir: ctx.tool_context.working_dir.display().to_string(),
-                                response_tx: resp_tx,
-                            };
-                            if approval_tx.send(req).is_ok() {
-                                match resp_rx.await {
-                                    Ok(d) if !d.approved => {
-                                        let result_content = ReactLoop::format_tool_result(
+                    if needs_approval && let Some(approval_tx) = ctx.tool_approval_tx {
+                        let command = args
+                            .get("command")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
+                        let req = opendev_runtime::ToolApprovalRequest {
+                            tool_name: name.clone(),
+                            command: command.clone(),
+                            working_dir: ctx.tool_context.working_dir.display().to_string(),
+                            response_tx: resp_tx,
+                        };
+                        if approval_tx.send(req).is_ok() {
+                            match resp_rx.await {
+                                Ok(d) if !d.approved => {
+                                    let result_content = ReactLoop::format_tool_result(
+                                        &name,
+                                        &serde_json::json!({
+                                            "success": false,
+                                            "error": "Command denied by user"
+                                        }),
+                                    );
+                                    messages.push(serde_json::json!({
+                                        "role": "tool",
+                                        "tool_call_id": id,
+                                        "name": name,
+                                        "content": result_content,
+                                    }));
+                                    if let Some(cb) = ctx.event_callback {
+                                        cb.on_tool_result(
+                                            &id,
                                             &name,
-                                            &serde_json::json!({
-                                                "success": false,
-                                                "error": "Command denied by user"
-                                            }),
+                                            "Command denied by user",
+                                            false,
                                         );
-                                        messages.push(serde_json::json!({
-                                            "role": "tool",
-                                            "tool_call_id": id,
-                                            "name": name,
-                                            "content": result_content,
-                                        }));
-                                        if let Some(cb) = ctx.event_callback {
-                                            cb.on_tool_result(
-                                                &id,
-                                                &name,
-                                                "Command denied by user",
-                                                false,
-                                            );
-                                            cb.on_tool_finished(&id, false);
-                                        }
-                                        continue;
+                                        cb.on_tool_finished(&id, false);
                                     }
-                                    Ok(d) => {
-                                        if d.choice == "yes_remember" {
-                                            auto_approved_patterns.insert(name.clone());
-                                            debug!(
-                                                tool = %name,
-                                                "Auto-approving tool for remainder of session"
-                                            );
-                                        }
-                                        if d.command != command {
-                                            args.insert(
-                                                "command".to_string(),
-                                                serde_json::json!(d.command),
-                                            );
-                                        }
+                                    continue;
+                                }
+                                Ok(d) => {
+                                    if d.choice == "yes_remember" {
+                                        auto_approved_patterns.insert(name.clone());
+                                        debug!(
+                                            tool = %name,
+                                            "Auto-approving tool for remainder of session"
+                                        );
                                     }
-                                    Err(_) => {
-                                        // Channel dropped — proceed without approval
+                                    if d.command != command {
+                                        args.insert(
+                                            "command".to_string(),
+                                            serde_json::json!(d.command),
+                                        );
                                     }
+                                }
+                                Err(_) => {
+                                    // Channel dropped — proceed without approval
                                 }
                             }
                         }
