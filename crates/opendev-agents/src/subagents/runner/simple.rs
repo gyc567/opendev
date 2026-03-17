@@ -1,9 +1,4 @@
-//! SubagentRunner trait and implementations.
-//!
-//! Defines a trait for react loop strategies so each subagent type
-//! can have its own loop. `StandardReactRunner` wraps the existing
-//! `ReactLoop` for General/Planner/Build agents, while `SimpleReactRunner`
-//! provides a stripped-down loop for Code-Explorer.
+//! SimpleReactRunner — stripped-down loop for Code-Explorer subagents.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -13,96 +8,9 @@ use async_trait::async_trait;
 use serde_json::Value;
 use tracing::{debug, info, warn};
 
-use crate::llm_calls::LlmCaller;
-use crate::react_loop::{PARALLELIZABLE_TOOLS, ReactLoop, ReactLoopConfig};
-use crate::traits::{AgentError, AgentEventCallback, AgentResult, TaskMonitor};
-use opendev_http::adapted_client::AdaptedClient;
-use opendev_runtime::ToolApprovalSender;
-use opendev_tools_core::{ToolContext, ToolRegistry};
-use tokio_util::sync::CancellationToken;
-
-/// Dependencies bundled for the runner (avoids many-param functions).
-pub struct RunnerContext<'a> {
-    pub caller: &'a LlmCaller,
-    pub http_client: &'a AdaptedClient,
-    pub tool_schemas: &'a [Value],
-    pub tool_registry: &'a ToolRegistry,
-    pub tool_context: &'a ToolContext,
-    pub event_callback: Option<&'a dyn AgentEventCallback>,
-    pub cancel: Option<&'a CancellationToken>,
-    pub tool_approval_tx: Option<&'a ToolApprovalSender>,
-}
-
-/// Trait for react loop strategies.
-#[async_trait]
-pub trait SubagentRunner: Send + Sync {
-    /// Run the react loop over the given message history.
-    async fn run(
-        &self,
-        ctx: &RunnerContext<'_>,
-        messages: &mut Vec<Value>,
-    ) -> Result<AgentResult, AgentError>;
-
-    /// Name of this runner (for logging).
-    fn name(&self) -> &str;
-}
-
-// ---------------------------------------------------------------------------
-// StandardReactRunner — wraps existing ReactLoop
-// ---------------------------------------------------------------------------
-
-/// Wraps the existing `ReactLoop` for General, Planner, Build agents.
-///
-/// Delegates to `ReactLoop::run()` with subagent-appropriate config
-/// (no cost_tracker, no compactor, no todo_manager, no approval gates).
-pub struct StandardReactRunner {
-    config: ReactLoopConfig,
-}
-
-impl StandardReactRunner {
-    /// Create a new standard runner with the given config.
-    pub fn new(config: ReactLoopConfig) -> Self {
-        Self { config }
-    }
-}
-
-#[async_trait]
-impl SubagentRunner for StandardReactRunner {
-    async fn run(
-        &self,
-        ctx: &RunnerContext<'_>,
-        messages: &mut Vec<Value>,
-    ) -> Result<AgentResult, AgentError> {
-        let react_loop = ReactLoop::new(self.config.clone());
-
-        react_loop
-            .run(
-                ctx.caller,
-                ctx.http_client,
-                messages,
-                ctx.tool_schemas,
-                ctx.tool_registry,
-                ctx.tool_context,
-                None::<&dyn TaskMonitor>,
-                ctx.event_callback,
-                None, // no cost_tracker
-                None, // no artifact_index
-                None, // no compactor
-                None, // no todo_manager
-                ctx.cancel,
-                ctx.tool_approval_tx,
-            )
-            .await
-    }
-
-    fn name(&self) -> &str {
-        "StandardReactRunner"
-    }
-}
-
-// ---------------------------------------------------------------------------
-// SimpleReactRunner — stripped-down loop for Code-Explorer
-// ---------------------------------------------------------------------------
+use super::{RunnerContext, SubagentRunner};
+use crate::react_loop::{PARALLELIZABLE_TOOLS, ReactLoop};
+use crate::traits::{AgentError, AgentResult};
 
 /// A clean, minimal react loop for read-only exploration subagents.
 ///
@@ -850,11 +758,5 @@ mod tests {
     fn test_simple_runner_name() {
         let runner = SimpleReactRunner::new(50);
         assert_eq!(runner.name(), "SimpleReactRunner");
-    }
-
-    #[test]
-    fn test_standard_runner_name() {
-        let runner = StandardReactRunner::new(ReactLoopConfig::default());
-        assert_eq!(runner.name(), "StandardReactRunner");
     }
 }
