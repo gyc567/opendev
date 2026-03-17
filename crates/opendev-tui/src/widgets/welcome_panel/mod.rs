@@ -7,185 +7,17 @@
 //! - Cohesive blue-themed gradient text and border
 //! - Fade-out animation on first message submission
 
+mod color;
+mod state;
+
+pub use state::WelcomePanelState;
+
 use ratatui::{buffer::Buffer, layout::Rect, style::Color, widgets::Widget};
 
 use crate::formatters::style_tokens;
 use crate::widgets::spinner::SPINNER_FRAMES;
 
-// ---------------------------------------------------------------------------
-// HSL → RGB helper
-// ---------------------------------------------------------------------------
-
-/// Convert HSL to ratatui `Color::Rgb`. Hue in 0..360, saturation/lightness in 0.0..1.0.
-fn hsl_to_rgb(hue: f64, saturation: f64, lightness: f64) -> Color {
-    let c = (1.0 - (2.0 * lightness - 1.0).abs()) * saturation;
-    let h = hue / 60.0;
-    let x = c * (1.0 - (h % 2.0 - 1.0).abs());
-    let (r1, g1, b1) = match h as u32 {
-        0 => (c, x, 0.0),
-        1 => (x, c, 0.0),
-        2 => (0.0, c, x),
-        3 => (0.0, x, c),
-        4 => (x, 0.0, c),
-        _ => (c, 0.0, x),
-    };
-    let m = lightness - c / 2.0;
-    Color::Rgb(
-        ((r1 + m) * 255.0).clamp(0.0, 255.0) as u8,
-        ((g1 + m) * 255.0).clamp(0.0, 255.0) as u8,
-        ((b1 + m) * 255.0).clamp(0.0, 255.0) as u8,
-    )
-}
-
-// ---------------------------------------------------------------------------
-// Inline pseudo-random (LCG — no `rand` dependency)
-// ---------------------------------------------------------------------------
-
-fn pseudo_rand(seed: &mut u64) -> f32 {
-    *seed = seed
-        .wrapping_mul(6_364_136_223_846_793_005)
-        .wrapping_add(1_442_695_040_888_963_407);
-    (*seed >> 33) as f32 / (1u64 << 31) as f32
-}
-
-// ---------------------------------------------------------------------------
-// Rain column
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, Clone)]
-struct RainColumn {
-    y: f32,
-    speed: f32,
-    trail_len: u8,
-    char_offset: u8,
-    hue_offset: f32, // per-column hue variation for depth
-}
-
-// ---------------------------------------------------------------------------
-// WelcomePanelState — animation state ticked by App
-// ---------------------------------------------------------------------------
-
-/// Persistent animation state for the welcome panel.
-#[derive(Debug, Clone)]
-pub struct WelcomePanelState {
-    gradient_offset: u16,
-    braille_offset: usize,
-    braille_tick: u8,
-    breathe_phase: f64,
-    rain_columns: Vec<RainColumn>,
-    rain_width: usize,
-    rain_height: usize,
-    fade_progress: f32,
-    /// Whether the panel is currently fading out.
-    pub is_fading: bool,
-    /// Set to `true` once the fade-out completes; the panel should no longer be rendered.
-    pub fade_complete: bool,
-    rng_seed: u64,
-}
-
-impl WelcomePanelState {
-    pub fn new() -> Self {
-        let seed = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos() as u64)
-            .unwrap_or(42);
-        Self {
-            gradient_offset: 0,
-            braille_offset: 0,
-            braille_tick: 0,
-            breathe_phase: 0.0,
-            rain_columns: Vec::new(),
-            rain_width: 0,
-            rain_height: 0,
-            fade_progress: 1.0,
-            is_fading: false,
-            fade_complete: false,
-            rng_seed: seed,
-        }
-    }
-
-    /// Advance animations by one tick (~60ms).
-    pub fn tick(&mut self, _terminal_width: u16, _terminal_height: u16) {
-        if self.is_fading {
-            self.fade_progress -= 0.1;
-            if self.fade_progress <= 0.0 {
-                self.fade_progress = 0.0;
-                self.fade_complete = true;
-            }
-            return;
-        }
-
-        // Gradient rotation (slower, more elegant sweep)
-        self.gradient_offset = (self.gradient_offset + 3) % 360;
-
-        // Braille offset advances every 2 ticks
-        self.braille_tick += 1;
-        if self.braille_tick >= 2 {
-            self.braille_tick = 0;
-            self.braille_offset = (self.braille_offset + 1) % SPINNER_FRAMES.len();
-        }
-
-        // Breathing phase: full cycle in ~67 ticks (~4s at 60ms tick)
-        self.breathe_phase += std::f64::consts::TAU / 67.0;
-        if self.breathe_phase >= std::f64::consts::TAU {
-            self.breathe_phase -= std::f64::consts::TAU;
-        }
-
-        // Advance rain
-        self.step_rain();
-    }
-
-    /// Begin the fade-out animation.
-    pub fn start_fade(&mut self) {
-        self.is_fading = true;
-    }
-
-    /// Lazily initialize or resize the rain field.
-    pub fn ensure_rain_field(&mut self, w: usize, h: usize) {
-        if self.rain_width == w && self.rain_height == h && !self.rain_columns.is_empty() {
-            return;
-        }
-        self.rain_width = w;
-        self.rain_height = h;
-        self.rain_columns.clear();
-        self.rain_columns.reserve(w);
-        for _ in 0..w {
-            let y = pseudo_rand(&mut self.rng_seed) * h as f32;
-            let speed = 0.10 + pseudo_rand(&mut self.rng_seed) * 0.40;
-            let trail_len = 4 + (pseudo_rand(&mut self.rng_seed) * 6.0) as u8;
-            let char_offset = (pseudo_rand(&mut self.rng_seed) * SPINNER_FRAMES.len() as f32) as u8;
-            let hue_offset = pseudo_rand(&mut self.rng_seed) * 30.0 - 15.0; // -15..+15
-            self.rain_columns.push(RainColumn {
-                y,
-                speed,
-                trail_len,
-                char_offset,
-                hue_offset,
-            });
-        }
-    }
-
-    /// Advance rain drop positions, resetting off-screen columns.
-    fn step_rain(&mut self) {
-        let h = self.rain_height as f32;
-        if h <= 0.0 {
-            return;
-        }
-        for col in &mut self.rain_columns {
-            col.y += col.speed;
-            if col.y > h + col.trail_len as f32 {
-                col.y = -(pseudo_rand(&mut (col.char_offset as u64 ^ 0xDEAD_BEEF)) * 6.0);
-                col.speed = 0.10 + (col.char_offset as f32 % 9.0) * 0.04;
-            }
-        }
-    }
-}
-
-impl Default for WelcomePanelState {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+use color::hsl_to_rgb;
 
 // ---------------------------------------------------------------------------
 // WelcomePanelWidget — renders directly to the buffer
@@ -529,99 +361,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_hsl_primary_colors() {
-        // Red: hue=0, sat=1.0, lit=0.5
-        let Color::Rgb(r, g, b) = hsl_to_rgb(0.0, 1.0, 0.5) else {
-            panic!("expected Rgb");
-        };
-        assert_eq!(r, 255);
-        assert!(g < 5);
-        assert!(b < 5);
-
-        // Green: hue=120
-        let Color::Rgb(r, g, b) = hsl_to_rgb(120.0, 1.0, 0.5) else {
-            panic!("expected Rgb");
-        };
-        assert!(r < 5);
-        assert_eq!(g, 255);
-        assert!(b < 5);
-
-        // Blue: hue=240
-        let Color::Rgb(r, g, b) = hsl_to_rgb(240.0, 1.0, 0.5) else {
-            panic!("expected Rgb");
-        };
-        assert!(r < 5);
-        assert!(g < 5);
-        assert_eq!(b, 255);
-    }
-
-    #[test]
-    fn test_state_tick_gradient() {
-        let mut state = WelcomePanelState::new();
-        assert_eq!(state.gradient_offset, 0);
-        state.tick(80, 24);
-        assert_eq!(state.gradient_offset, 3);
-        state.tick(80, 24);
-        assert_eq!(state.gradient_offset, 6);
-
-        // Wraps at 360
-        state.gradient_offset = 358;
-        state.tick(80, 24);
-        assert_eq!(state.gradient_offset, 1); // (358+3) % 360 = 1
-    }
-
-    #[test]
-    fn test_braille_cycles() {
-        let mut state = WelcomePanelState::new();
-        assert_eq!(state.braille_offset, 0);
-        state.tick(80, 24); // braille_tick = 1
-        assert_eq!(state.braille_offset, 0); // not yet
-        state.tick(80, 24); // braille_tick wraps, offset advances
-        assert_eq!(state.braille_offset, 1);
-    }
-
-    #[test]
-    fn test_fade_completes() {
-        let mut state = WelcomePanelState::new();
-        assert!(!state.fade_complete);
-        state.start_fade();
-        // fade_progress starts at 1.0, decrements 0.1 per tick
-        for _ in 0..10 {
-            state.tick(80, 24);
-        }
-        assert!(state.fade_complete);
-        assert!(state.fade_progress <= 0.0);
-    }
-
-    #[test]
-    fn test_rain_init() {
-        let mut state = WelcomePanelState::new();
-        state.ensure_rain_field(40, 10);
-        assert_eq!(state.rain_columns.len(), 40);
-        for col in &state.rain_columns {
-            assert!(col.speed >= 0.10);
-            assert!(col.speed <= 0.50);
-            assert!(col.trail_len >= 4 && col.trail_len <= 9);
-        }
-    }
-
-    #[test]
-    fn test_rain_step() {
-        let mut state = WelcomePanelState::new();
-        state.ensure_rain_field(5, 10);
-        let initial_ys: Vec<f32> = state.rain_columns.iter().map(|c| c.y).collect();
-        state.step_rain();
-        for (i, col) in state.rain_columns.iter().enumerate() {
-            // Either advanced or reset (if it went off-screen)
-            assert!(
-                col.y != initial_ys[i]
-                    || col.speed == 0.0
-                    || initial_ys[i] > 10.0 + col.trail_len as f32
-            );
-        }
-    }
-
-    #[test]
     fn test_widget_renders_visible_output() {
         use ratatui::{buffer::Buffer, layout::Rect, widgets::Widget};
 
@@ -674,15 +413,6 @@ mod tests {
             modified > 5,
             "Tier 1 should render gradient text, got {modified} cells"
         );
-    }
-
-    #[test]
-    fn test_pseudo_rand_range() {
-        let mut seed = 12345u64;
-        for _ in 0..100 {
-            let v = pseudo_rand(&mut seed);
-            assert!((0.0..1.0).contains(&v), "pseudo_rand out of range: {v}");
-        }
     }
 
     #[test]
