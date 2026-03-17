@@ -22,7 +22,7 @@ use super::embedded;
 
 // Re-export public items from submodules
 pub use conditions::{ctx_bool, ctx_eq, ctx_in, ctx_present};
-pub use factories::{create_composer, create_default_composer, create_thinking_composer};
+pub use factories::{create_composer, create_default_composer};
 
 /// Regex to strip HTML comment frontmatter from markdown files.
 static FRONTMATTER_RE: LazyLock<Regex> = LazyLock::new(|| {

@@ -139,6 +139,11 @@ impl ReactLoop {
             {
                 assistant_msg["tool_calls"] = tool_calls.clone();
             }
+            if let Some(reasoning) = msg.get("reasoning_content")
+                && !reasoning.is_null()
+            {
+                assistant_msg["reasoning_content"] = reasoning.clone();
+            }
             messages.push(assistant_msg);
         }
 

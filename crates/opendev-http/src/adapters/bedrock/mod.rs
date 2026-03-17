@@ -114,6 +114,11 @@ impl super::base::ProviderAdapter for BedrockAdapter {
     }
 
     fn convert_request(&self, mut payload: Value) -> Value {
+        // Strip internal reasoning effort field (Bedrock doesn't support it)
+        payload
+            .as_object_mut()
+            .map(|obj| obj.remove("_reasoning_effort"));
+
         request::extract_system(&mut payload);
         request::convert_tools(&mut payload);
         request::convert_tool_messages(&mut payload);

@@ -11,7 +11,7 @@ pub mod reminders;
 
 pub use composer::{
     ConditionFn, PromptComposer, PromptContext, PromptSection, create_composer,
-    create_default_composer, create_thinking_composer, strip_frontmatter, substitute_variables,
+    create_default_composer, strip_frontmatter, substitute_variables,
 };
 pub use embedded::{TEMPLATE_COUNT, TEMPLATES, get_embedded};
 pub use loader::{PromptLoadError, PromptLoader};

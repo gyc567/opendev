@@ -140,6 +140,10 @@ impl super::base::ProviderAdapter for GroqAdapter {
 
     fn convert_request(&self, mut payload: Value) -> Value {
         Self::clean_request(&mut payload);
+        // Strip internal reasoning effort field
+        payload
+            .as_object_mut()
+            .map(|obj| obj.remove("_reasoning_effort"));
         payload
     }
 

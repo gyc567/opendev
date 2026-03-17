@@ -1,7 +1,7 @@
 //! LLM API call methods.
 //!
-//! Mirrors `opendev/core/agents/main_agent/llm_calls.py`.
-//! Provides `LlmCaller` with methods for normal, thinking, critique, and compact calls.
+//! Provides `LlmCaller` with methods for action calls (with tools),
+//! thinking calls (no tools, reasoning only), and response parsing.
 
 mod model_detection;
 

@@ -320,6 +320,14 @@ impl super::base::ProviderAdapter for OpenAiAdapter {
     }
 
     fn convert_request(&self, payload: Value) -> Value {
+        let mut payload = payload;
+
+        // Extract and remove internal reasoning effort field
+        let reasoning_effort = payload
+            .as_object_mut()
+            .and_then(|obj| obj.remove("_reasoning_effort"))
+            .and_then(|v| v.as_str().map(String::from));
+
         let messages = payload
             .get("messages")
             .and_then(|m| m.as_array())
@@ -351,6 +359,16 @@ impl super::base::ProviderAdapter for OpenAiAdapter {
             && let Some(temp) = payload.get("temperature")
         {
             responses_payload["temperature"] = temp.clone();
+        }
+
+        // Reasoning config for o-series models
+        if Self::is_reasoning_model(&payload)
+            && let Some(ref effort) = reasoning_effort
+        {
+            responses_payload["reasoning"] = json!({
+                "effort": effort,
+                "summary": "auto",
+            });
         }
 
         // Tools

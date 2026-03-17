@@ -304,6 +304,20 @@ impl GeminiAdapter {
             },
         })
     }
+
+    /// Check if the model supports native thinking (Gemini 2.5+).
+    fn supports_thinking(model: &str) -> bool {
+        model.contains("2.5") || model.contains("2-5")
+    }
+
+    /// Map reasoning effort level to a thinking budget token count.
+    fn thinking_budget(effort: &str) -> u64 {
+        match effort {
+            "low" => 4096,
+            "high" => 24576,
+            _ => 10000, // medium
+        }
+    }
 }
 
 impl Default for GeminiAdapter {
@@ -319,6 +333,14 @@ impl super::base::ProviderAdapter for GeminiAdapter {
     }
 
     fn convert_request(&self, payload: Value) -> Value {
+        let mut payload = payload;
+
+        // Extract and remove internal reasoning effort field
+        let reasoning_effort = payload
+            .as_object_mut()
+            .and_then(|obj| obj.remove("_reasoning_effort"))
+            .and_then(|v| v.as_str().map(String::from));
+
         let messages = payload
             .get("messages")
             .and_then(|m| m.as_array())
@@ -351,6 +373,17 @@ impl super::base::ProviderAdapter for GeminiAdapter {
         if let Some(tok) = max_tok {
             gen_config["maxOutputTokens"] = tok.clone();
         }
+
+        // Thinking config for Gemini 2.5+ models
+        if Self::supports_thinking(&self.model)
+            && let Some(ref effort) = reasoning_effort
+        {
+            gen_config["thinkingConfig"] = json!({
+                "includeThoughts": true,
+                "thinkingBudget": Self::thinking_budget(effort),
+            });
+        }
+
         if gen_config.as_object().is_some_and(|o| !o.is_empty()) {
             gemini_payload["generationConfig"] = gen_config;
         }

@@ -1,7 +1,7 @@
 //! Factory functions that create pre-configured [`PromptComposer`] instances.
 //!
-//! Each factory registers the appropriate set of prompt sections for a
-//! particular agent mode (default, thinking, etc.).
+//! Each factory registers the appropriate set of prompt sections for
+//! the default agent mode.
 
 use std::path::Path;
 
@@ -188,52 +188,9 @@ pub fn create_default_composer(templates_dir: impl AsRef<Path>) -> PromptCompose
     composer
 }
 
-/// Create a thinking-mode composer.
-pub fn create_thinking_composer(templates_dir: impl AsRef<Path>) -> PromptComposer {
-    let mut composer = PromptComposer::new(templates_dir.as_ref());
-
-    // Core thinking identity - MUST be first (matches Python's core_prompt loading)
-    composer.register_section("thinking_core", "system/thinking.md", None, 10, true);
-
-    composer.register_section(
-        "available_tools",
-        "system/thinking/thinking-available-tools.md",
-        None,
-        45,
-        true,
-    );
-    composer.register_section(
-        "subagent_guide",
-        "system/thinking/thinking-subagent-guide.md",
-        None,
-        50,
-        true,
-    );
-    composer.register_section(
-        "code_references",
-        "system/thinking/thinking-code-references.md",
-        None,
-        85,
-        true,
-    );
-    composer.register_section(
-        "output_rules",
-        "system/thinking/thinking-output-rules.md",
-        None,
-        90,
-        true,
-    );
-
-    composer
-}
-
 /// Create the appropriate composer for a given mode.
-pub fn create_composer(templates_dir: impl AsRef<Path>, mode: &str) -> PromptComposer {
-    if mode == "system/thinking" {
-        create_thinking_composer(templates_dir)
-    } else {
-        create_default_composer(templates_dir)
-    }
+pub fn create_composer(templates_dir: impl AsRef<Path>, _mode: &str) -> PromptComposer {
+    create_default_composer(templates_dir)
 }
 
 #[cfg(test)]
@@ -249,20 +206,10 @@ mod tests {
     }
 
     #[test]
-    fn test_create_thinking_composer() {
-        let dir = tempfile::TempDir::new().unwrap();
-        let composer = create_thinking_composer(dir.path());
-        assert_eq!(composer.section_count(), 5);
-    }
-
-    #[test]
     fn test_create_composer_dispatch() {
         let dir = tempfile::TempDir::new().unwrap();
 
         let main = create_composer(dir.path(), "system/main");
         assert!(main.section_count() > 15);
-
-        let thinking = create_composer(dir.path(), "system/thinking");
-        assert_eq!(thinking.section_count(), 5);
     }
 }

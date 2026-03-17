@@ -86,7 +86,18 @@ impl AdaptedClient {
                 converted = adapter.convert_request(payload.clone());
                 &converted
             }
-            None => payload,
+            None => {
+                // Strip internal `_reasoning_effort` field for passthrough providers
+                // that don't have an adapter to consume it.
+                if payload.get("_reasoning_effort").is_some() {
+                    let mut cleaned = payload.clone();
+                    cleaned.as_object_mut().unwrap().remove("_reasoning_effort");
+                    converted = cleaned;
+                    &converted
+                } else {
+                    payload
+                }
+            }
         };
 
         let mut result = self.client.post_json(effective_payload, cancel).await?;

@@ -77,6 +77,10 @@ impl super::base::ProviderAdapter for AzureOpenAiAdapter {
 
     fn convert_request(&self, mut payload: Value) -> Value {
         Self::strip_model(&mut payload);
+        // Strip internal reasoning effort field
+        payload
+            .as_object_mut()
+            .map(|obj| obj.remove("_reasoning_effort"));
         payload
     }
 

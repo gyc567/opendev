@@ -67,6 +67,7 @@ impl ConfigLoader {
             "api_base_url",
             "max_tokens",
             "temperature",
+            "reasoning_effort",
             "auto_save_interval",
             "max_context_tokens",
             "verbose",

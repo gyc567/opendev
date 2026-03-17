@@ -751,16 +751,6 @@ fn two_part_cache_splitting() {
     let _ = dynamic;
 }
 
-/// Thinking composer has exactly 5 sections (core identity + 4 sub-sections).
-#[test]
-fn thinking_composer_has_5_sections() {
-    use opendev_agents::prompts::composer::create_thinking_composer;
-
-    let tmp = tempfile::TempDir::new().unwrap();
-    let composer = create_thinking_composer(tmp.path());
-    assert_eq!(composer.section_count(), 5);
-}
-
 /// Prompt variable substitution replaces {{placeholders}}.
 #[test]
 fn prompt_variable_substitution() {

@@ -381,7 +381,12 @@ impl AgentRuntime {
             )
             .with_event_sender(subagent_event_tx)
             .with_tool_approval_tx(tool_approval_tx.clone())
-            .with_parent_max_tokens(model_max_tokens),
+            .with_parent_max_tokens(model_max_tokens)
+            .with_parent_reasoning_effort(if config.reasoning_effort == "none" {
+                None
+            } else {
+                Some(config.reasoning_effort.clone())
+            }),
         ));
         channel_receivers.subagent_event_rx = Some(subagent_event_rx);
         info!(
@@ -398,7 +403,11 @@ impl AgentRuntime {
                 None
             },
             max_tokens: Some(model_max_tokens),
-            reasoning_effort: None,
+            reasoning_effort: if config.reasoning_effort == "none" {
+                None
+            } else {
+                Some(config.reasoning_effort.clone())
+            },
         });
 
         let react_loop = ReactLoop::new(ReactLoopConfig::default());

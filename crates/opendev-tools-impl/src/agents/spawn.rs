@@ -33,6 +33,8 @@ pub struct SpawnSubagentTool {
     tool_approval_tx: Option<opendev_runtime::ToolApprovalSender>,
     /// Parent agent's max_tokens from model registry (subagents inherit this as fallback).
     parent_max_tokens: u64,
+    /// Parent agent's reasoning effort (subagents inherit this).
+    parent_reasoning_effort: Option<String>,
 }
 
 impl SpawnSubagentTool {
@@ -55,6 +57,7 @@ impl SpawnSubagentTool {
             event_tx: None,
             tool_approval_tx: None,
             parent_max_tokens: 16384,
+            parent_reasoning_effort: None,
         }
     }
 
@@ -73,6 +76,12 @@ impl SpawnSubagentTool {
     /// Set the parent agent's max_tokens (subagents inherit this as fallback).
     pub fn with_parent_max_tokens(mut self, max_tokens: u64) -> Self {
         self.parent_max_tokens = max_tokens;
+        self
+    }
+
+    /// Set the parent agent's reasoning effort (subagents inherit this).
+    pub fn with_parent_reasoning_effort(mut self, effort: Option<String>) -> Self {
+        self.parent_reasoning_effort = effort;
         self
     }
 }
@@ -232,6 +241,7 @@ impl BaseTool for SpawnSubagentTool {
                 None,
                 self.tool_approval_tx.as_ref(),
                 self.parent_max_tokens,
+                self.parent_reasoning_effort.clone(),
             )
             .await;
 

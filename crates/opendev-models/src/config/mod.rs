@@ -216,6 +216,10 @@ pub struct AppConfig {
     #[serde(default = "default_temperature")]
     pub temperature: f64,
 
+    // Reasoning effort for models that support extended thinking ("low", "medium", "high", "none")
+    #[serde(default = "default_reasoning_effort")]
+    pub reasoning_effort: String,
+
     // Session settings
     #[serde(default = "default_auto_save_interval")]
     pub auto_save_interval: u32,
@@ -339,6 +343,9 @@ fn default_plan_mode_plan_agent_count() -> u32 {
 fn default_plan_mode_explore_variant() -> String {
     "enabled".to_string()
 }
+fn default_reasoning_effort() -> String {
+    "medium".to_string()
+}
 
 impl Default for AppConfig {
     fn default() -> Self {
@@ -355,6 +362,7 @@ impl Default for AppConfig {
             api_base_url: None,
             max_tokens: 16384,
             temperature: 0.6,
+            reasoning_effort: "medium".to_string(),
             auto_save_interval: 5,
             max_context_tokens: 100_000,
             verbose: false,

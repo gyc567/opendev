@@ -61,6 +61,7 @@ impl SubagentManager {
         _task_monitor: Option<&dyn TaskMonitor>,
         tool_approval_tx: Option<&opendev_runtime::ToolApprovalSender>,
         parent_max_tokens: u64,
+        parent_reasoning_effort: Option<String>,
     ) -> Result<SubagentRunResult, AgentError> {
         let spec = self.get(subagent_name).ok_or_else(|| {
             AgentError::ConfigError(format!("Unknown subagent type: {subagent_name}"))
@@ -164,7 +165,7 @@ impl SubagentManager {
             model: model.clone(),
             temperature: Some(temperature),
             max_tokens: Some(spec.max_tokens.unwrap_or(parent_max_tokens as u32) as u64),
-            reasoning_effort: None,
+            reasoning_effort: parent_reasoning_effort,
         });
 
         // Build tool schemas (filtered to allowed tools)
