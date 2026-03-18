@@ -182,6 +182,9 @@ impl AdaptedClient {
 
         // Read SSE events from the response body
         let mut final_body: Option<serde_json::Value> = None;
+        let mut accumulated_text = String::new();
+        let mut accumulated_reasoning = String::new();
+        let mut usage_data: Option<serde_json::Value> = None;
         let mut line_buf = String::new();
         let mut event_type: Option<String> = None;
 

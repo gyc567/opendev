@@ -535,6 +535,51 @@ impl super::base::ProviderAdapter for AnthropicAdapter {
         &self.api_url
     }
 
+    fn supports_streaming(&self) -> bool {
+        true
+    }
+
+    fn enable_streaming(&self, payload: &mut Value) {
+        payload["stream"] = json!(true);
+    }
+
+    fn parse_stream_event(
+        &self,
+        event_type: &str,
+        data: &Value,
+    ) -> Option<crate::streaming::StreamEvent> {
+        use crate::streaming::StreamEvent;
+        match event_type {
+            "content_block_delta" => {
+                let delta = data.get("delta")?;
+                let delta_type = delta.get("type")?.as_str()?;
+                match delta_type {
+                    "text_delta" => {
+                        let text = delta.get("text")?.as_str()?;
+                        Some(StreamEvent::TextDelta(text.to_string()))
+                    }
+                    "thinking_delta" => {
+                        let text = delta.get("thinking")?.as_str()?;
+                        Some(StreamEvent::ReasoningDelta(text.to_string()))
+                    }
+                    _ => None,
+                }
+            }
+            "message_stop" => None,
+            "message_start" => None,
+            "message_delta" => None,
+            "content_block_start" => None,
+            "content_block_stop" => None,
+            "ping" => None,
+            "error" => {
+                let error = data.get("error")?;
+                let msg = error.get("message")?.as_str()?;
+                Some(StreamEvent::Error(msg.to_string()))
+            }
+            _ => None,
+        }
+    }
+
     fn extra_headers(&self) -> Vec<(String, String)> {
         let mut headers = vec![("anthropic-version".into(), ANTHROPIC_VERSION.into())];
         // Build beta features list
