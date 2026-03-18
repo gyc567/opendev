@@ -6,7 +6,7 @@
 use tracing::{debug, info};
 
 /// Current config version. Increment this when adding migrations.
-pub const CURRENT_CONFIG_VERSION: u32 = 1;
+pub const CURRENT_CONFIG_VERSION: u32 = 2;
 
 /// Key used to store the config version in JSON.
 pub const VERSION_KEY: &str = "config_version";
@@ -48,6 +48,15 @@ pub fn migrate_config(mut value: serde_json::Value) -> (serde_json::Value, bool)
                 migrated = true;
                 info!("Migrated config from v0 to v1");
             }
+            1 => {
+                // Migration from version 1 to version 2:
+                // - Move model_compact/model_compact_provider into agents.compact
+                // - Remove model_critique/model_critique_provider (dead code)
+                value = migrate_v1_to_v2(value);
+                version = 2;
+                migrated = true;
+                info!("Migrated config from v1 to v2");
+            }
             _ => {
                 // Unknown version — skip remaining migrations
                 debug!(
@@ -69,6 +78,50 @@ pub fn migrate_config(mut value: serde_json::Value) -> (serde_json::Value, bool)
 fn migrate_v0_to_v1(mut value: serde_json::Value) -> serde_json::Value {
     if let Some(obj) = value.as_object_mut() {
         obj.insert(VERSION_KEY.to_string(), serde_json::Value::Number(1.into()));
+    }
+    value
+}
+
+/// Migrate from version 1 to version 2.
+///
+/// - Moves `model_compact` / `model_compact_provider` into `agents.compact`
+/// - Removes `model_critique` / `model_critique_provider` (dead code, never
+///   consumed by any runtime path)
+fn migrate_v1_to_v2(mut value: serde_json::Value) -> serde_json::Value {
+    if let Some(obj) = value.as_object_mut() {
+        // Extract compact fields before removing them
+        let compact_model = obj
+            .remove("model_compact")
+            .and_then(|v| v.as_str().map(String::from));
+        let compact_provider = obj
+            .remove("model_compact_provider")
+            .and_then(|v| v.as_str().map(String::from));
+
+        // Remove critique fields (dead code)
+        obj.remove("model_critique");
+        obj.remove("model_critique_provider");
+
+        // If either compact field was set, write into agents.compact
+        if compact_model.is_some() || compact_provider.is_some() {
+            let agents = obj.entry("agents").or_insert_with(|| serde_json::json!({}));
+            if let Some(agents_obj) = agents.as_object_mut() {
+                let mut compact_entry = serde_json::Map::new();
+                if let Some(model) = compact_model {
+                    compact_entry.insert("model".to_string(), serde_json::Value::String(model));
+                }
+                if let Some(provider) = compact_provider {
+                    compact_entry
+                        .insert("provider".to_string(), serde_json::Value::String(provider));
+                }
+                agents_obj.insert(
+                    "compact".to_string(),
+                    serde_json::Value::Object(compact_entry),
+                );
+            }
+        }
+
+        // Stamp version
+        obj.insert(VERSION_KEY.to_string(), serde_json::Value::Number(2.into()));
     }
     value
 }
@@ -101,7 +154,7 @@ mod tests {
 
     #[test]
     fn test_current_version() {
-        assert!(CURRENT_CONFIG_VERSION >= 1);
+        assert!(CURRENT_CONFIG_VERSION >= 2);
     }
 
     #[test]
@@ -146,12 +199,127 @@ mod tests {
             "verbose": true
         });
 
-        let (migrated, changed) = migrate_config(value);
-        assert!(changed);
+        let migrated = migrate_v0_to_v1(value);
         assert_eq!(config_version(&migrated), 1);
         assert_eq!(migrated["model_provider"], "fireworks");
         assert_eq!(migrated["temperature"], 0.7);
         assert_eq!(migrated["verbose"], true);
+    }
+
+    #[test]
+    fn test_migrate_v1_to_v2_with_compact() {
+        let value = serde_json::json!({
+            "config_version": 1,
+            "model_provider": "openai",
+            "model": "gpt-4",
+            "model_compact": "gemini-2.0-flash",
+            "model_compact_provider": "google"
+        });
+
+        let (migrated, changed) = migrate_config(value);
+        assert!(changed);
+        assert_eq!(config_version(&migrated), 2);
+
+        // Flat fields removed
+        assert!(migrated.get("model_compact").is_none());
+        assert!(migrated.get("model_compact_provider").is_none());
+
+        // Moved into agents.compact
+        assert_eq!(migrated["agents"]["compact"]["model"], "gemini-2.0-flash");
+        assert_eq!(migrated["agents"]["compact"]["provider"], "google");
+
+        // Original fields preserved
+        assert_eq!(migrated["model_provider"], "openai");
+        assert_eq!(migrated["model"], "gpt-4");
+    }
+
+    #[test]
+    fn test_migrate_v1_to_v2_removes_critique() {
+        let value = serde_json::json!({
+            "config_version": 1,
+            "model_critique": "gpt-4o",
+            "model_critique_provider": "openai"
+        });
+
+        let (migrated, _) = migrate_config(value);
+        assert!(migrated.get("model_critique").is_none());
+        assert!(migrated.get("model_critique_provider").is_none());
+    }
+
+    #[test]
+    fn test_migrate_v1_to_v2_no_compact_no_agents() {
+        let value = serde_json::json!({
+            "config_version": 1,
+            "model_provider": "openai",
+            "model": "gpt-4"
+        });
+
+        let (migrated, changed) = migrate_config(value);
+        assert!(changed);
+        assert_eq!(config_version(&migrated), 2);
+        // No agents entry created when no compact was set
+        assert!(migrated.get("agents").is_none());
+    }
+
+    #[test]
+    fn test_migrate_v1_to_v2_preserves_existing_agents() {
+        let value = serde_json::json!({
+            "config_version": 1,
+            "model_compact": "flash",
+            "model_compact_provider": "google",
+            "agents": {
+                "explore": { "model": "gpt-4o", "max_steps": 5 }
+            }
+        });
+
+        let (migrated, _) = migrate_config(value);
+        // Existing agent preserved
+        assert_eq!(migrated["agents"]["explore"]["model"], "gpt-4o");
+        assert_eq!(migrated["agents"]["explore"]["max_steps"], 5);
+        // Compact added
+        assert_eq!(migrated["agents"]["compact"]["model"], "flash");
+        assert_eq!(migrated["agents"]["compact"]["provider"], "google");
+    }
+
+    #[test]
+    fn test_migrate_v1_to_v2_compact_model_only() {
+        // Only model set, no provider
+        let value = serde_json::json!({
+            "config_version": 1,
+            "model_compact": "flash"
+        });
+
+        let (migrated, _) = migrate_config(value);
+        assert_eq!(migrated["agents"]["compact"]["model"], "flash");
+        // No provider key
+        assert!(migrated["agents"]["compact"].get("provider").is_none());
+    }
+
+    #[test]
+    fn test_migrate_v0_through_v2() {
+        // Full migration from v0 through all versions
+        let value = serde_json::json!({
+            "model_provider": "openai",
+            "model": "gpt-4",
+            "model_compact": "flash",
+            "model_compact_provider": "google",
+            "model_critique": "gpt-4o",
+            "model_critique_provider": "openai"
+        });
+
+        assert_eq!(config_version(&value), 0);
+        let (migrated, changed) = migrate_config(value);
+        assert!(changed);
+        assert_eq!(config_version(&migrated), 2);
+
+        // Critique removed
+        assert!(migrated.get("model_critique").is_none());
+        assert!(migrated.get("model_critique_provider").is_none());
+
+        // Compact moved to agents
+        assert!(migrated.get("model_compact").is_none());
+        assert_eq!(migrated["agents"]["compact"]["model"], "flash");
+        assert_eq!(migrated["agents"]["compact"]["provider"], "google");
     }
 
     #[test]
@@ -168,8 +336,8 @@ mod tests {
 
     #[test]
     fn test_config_version_present() {
-        let value = serde_json::json!({"config_version": 1});
-        assert_eq!(config_version(&value), 1);
+        let value = serde_json::json!({"config_version": 2});
+        assert_eq!(config_version(&value), 2);
     }
 
     #[test]

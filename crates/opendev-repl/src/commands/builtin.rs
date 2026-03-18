@@ -335,7 +335,7 @@ impl BuiltinCommands {
             "" | "show" => {
                 println!("No session model overrides set.");
                 println!();
-                println!("Available slots: model, model_vlm, model_compact");
+                println!("Available slots: model, model_vlm");
                 println!(
                     "Use /session-models set <slot> <value> to override a model for this session."
                 );
@@ -347,14 +347,8 @@ impl BuiltinCommands {
                 } else {
                     let slot = set_parts[0];
                     let value = set_parts[1];
-                    let valid_slots = [
-                        "model",
-                        "model_provider",
-                        "model_vlm",
-                        "model_vlm_provider",
-                        "model_compact",
-                        "model_compact_provider",
-                    ];
+                    let valid_slots =
+                        ["model", "model_provider", "model_vlm", "model_vlm_provider"];
                     if valid_slots.contains(&slot) {
                         println!("Session override: {} = {}", slot, value);
                     } else {

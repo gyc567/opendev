@@ -59,10 +59,6 @@ impl ConfigLoader {
             "model",
             "model_vlm",
             "model_vlm_provider",
-            "model_critique",
-            "model_critique_provider",
-            "model_compact",
-            "model_compact_provider",
             "api_key",
             "api_base_url",
             "max_tokens",
@@ -189,26 +185,12 @@ impl ConfigLoader {
         let mut warnings = Vec::new();
 
         // 1. Model-provider pairing: model set without matching provider
-        let model_pairs: &[(&str, &Option<String>, &str, &Option<String>)] = &[
-            (
-                "model_vlm",
-                &config.model_vlm,
-                "model_vlm_provider",
-                &config.model_vlm_provider,
-            ),
-            (
-                "model_critique",
-                &config.model_critique,
-                "model_critique_provider",
-                &config.model_critique_provider,
-            ),
-            (
-                "model_compact",
-                &config.model_compact,
-                "model_compact_provider",
-                &config.model_compact_provider,
-            ),
-        ];
+        let model_pairs: &[(&str, &Option<String>, &str, &Option<String>)] = &[(
+            "model_vlm",
+            &config.model_vlm,
+            "model_vlm_provider",
+            &config.model_vlm_provider,
+        )];
         for (model_key, model_val, provider_key, provider_val) in model_pairs {
             if model_val.is_some() && provider_val.is_none() {
                 warnings.push(format!(

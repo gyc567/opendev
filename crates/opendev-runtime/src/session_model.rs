@@ -18,10 +18,6 @@ pub static SESSION_MODEL_FIELDS: &[&str] = &[
     "model_thinking_provider",
     "model_vlm",
     "model_vlm_provider",
-    "model_critique",
-    "model_critique_provider",
-    "model_compact",
-    "model_compact_provider",
 ];
 
 /// A session-model overlay: sparse key-value map of config overrides.
@@ -304,6 +300,6 @@ mod tests {
     fn test_session_model_fields_contains_expected() {
         assert!(SESSION_MODEL_FIELDS.contains(&"model"));
         assert!(SESSION_MODEL_FIELDS.contains(&"model_thinking"));
-        assert!(SESSION_MODEL_FIELDS.contains(&"model_compact_provider"));
+        assert!(SESSION_MODEL_FIELDS.contains(&"model_vlm_provider"));
     }
 }

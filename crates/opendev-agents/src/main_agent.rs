@@ -80,8 +80,6 @@ pub struct MainAgentConfig {
     pub model: String,
     /// Optional thinking model identifier.
     pub model_thinking: Option<String>,
-    /// Optional critique model identifier.
-    pub model_critique: Option<String>,
     /// Sampling temperature.
     pub temperature: Option<f64>,
     /// Maximum tokens to generate.
@@ -101,7 +99,6 @@ impl MainAgentConfig {
         Self {
             model: model.into(),
             model_thinking: None,
-            model_critique: None,
             temperature: Some(0.7),
             max_tokens: Some(4096),
             working_dir: None,
@@ -452,7 +449,6 @@ mod tests {
         let config = MainAgentConfig {
             model: "gpt-4o".to_string(),
             model_thinking: Some("o1-preview".to_string()),
-            model_critique: None,
             temperature: Some(0.5),
             max_tokens: Some(8192),
             working_dir: Some("/tmp/project".to_string()),
@@ -613,7 +609,6 @@ mod tests {
         assert_eq!(config.temperature, Some(0.7));
         assert_eq!(config.max_tokens, Some(4096));
         assert!(config.model_thinking.is_none());
-        assert!(config.model_critique.is_none());
         assert!(config.allowed_tools.is_none());
     }
 

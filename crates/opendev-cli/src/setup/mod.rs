@@ -126,6 +126,19 @@ pub async fn run_setup_wizard() -> Result<AppConfig, SetupError> {
     )?;
 
     // ─── Summary & Save ─────────────────────────────────────────────────
+    let mut agents = HashMap::new();
+    // Only store a compact agent entry if user chose a different model
+    if compact_provider != provider_id || compact_model != model_id {
+        agents.insert(
+            "compact".to_string(),
+            opendev_models::AgentConfigInline {
+                model: Some(compact_model.clone()),
+                provider: Some(compact_provider.clone()),
+                ..Default::default()
+            },
+        );
+    }
+
     let config = AppConfig {
         model_provider: provider_id.clone(),
         model: model_id.clone(),
@@ -133,8 +146,7 @@ pub async fn run_setup_wizard() -> Result<AppConfig, SetupError> {
         auto_save_interval: 5,
         model_vlm: Some(vlm_model.clone()),
         model_vlm_provider: Some(vlm_provider.clone()),
-        model_compact: Some(compact_model.clone()),
-        model_compact_provider: Some(compact_provider.clone()),
+        agents,
         ..AppConfig::default()
     };
 
