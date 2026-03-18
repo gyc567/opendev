@@ -196,8 +196,15 @@ impl AnthropicAdapter {
                         {
                             let mut content_blocks: Vec<Value> = Vec::new();
 
-                            // Echo thinking blocks back (required by Anthropic API)
-                            if let Some(reasoning) =
+                            // Echo thinking blocks back (required by Anthropic API).
+                            // Prefer raw _thinking_blocks which preserve `signature` fields;
+                            // fall back to reconstructing from reasoning_content.
+                            if let Some(raw_blocks) =
+                                msg.get("_thinking_blocks").and_then(|b| b.as_array())
+                                && !raw_blocks.is_empty()
+                            {
+                                content_blocks.extend(raw_blocks.iter().cloned());
+                            } else if let Some(reasoning) =
                                 msg.get("reasoning_content").and_then(|r| r.as_str())
                                 && !reasoning.is_empty()
                             {
@@ -241,16 +248,35 @@ impl AnthropicAdapter {
                             }));
                         } else {
                             // Non-tool-call assistant messages may also have reasoning
-                            if let Some(reasoning) =
-                                msg.get("reasoning_content").and_then(|r| r.as_str())
-                                && !reasoning.is_empty()
-                            {
+                            let has_raw_blocks = msg
+                                .get("_thinking_blocks")
+                                .and_then(|b| b.as_array())
+                                .is_some_and(|a| !a.is_empty());
+                            let has_reasoning = msg
+                                .get("reasoning_content")
+                                .and_then(|r| r.as_str())
+                                .is_some_and(|s| !s.is_empty());
+
+                            if has_raw_blocks || has_reasoning {
                                 let text =
                                     msg.get("content").and_then(|c| c.as_str()).unwrap_or("");
-                                let mut content_blocks = vec![json!({
-                                    "type": "thinking",
-                                    "thinking": reasoning
-                                })];
+                                let mut content_blocks: Vec<Value> = Vec::new();
+
+                                if let Some(raw_blocks) =
+                                    msg.get("_thinking_blocks").and_then(|b| b.as_array())
+                                    && !raw_blocks.is_empty()
+                                {
+                                    content_blocks.extend(raw_blocks.iter().cloned());
+                                } else if let Some(reasoning) =
+                                    msg.get("reasoning_content").and_then(|r| r.as_str())
+                                    && !reasoning.is_empty()
+                                {
+                                    content_blocks.push(json!({
+                                        "type": "thinking",
+                                        "thinking": reasoning
+                                    }));
+                                }
+
                                 if !text.is_empty() {
                                     content_blocks.push(json!({
                                         "type": "text",
@@ -353,16 +379,15 @@ impl AnthropicAdapter {
             .collect::<Vec<_>>()
             .join("");
 
-        // Extract thinking blocks → reasoning_content
-        let thinking_parts: Vec<String> = blocks
+        // Extract thinking blocks → reasoning_content + raw _thinking_blocks for echo-back
+        let thinking_blocks: Vec<Value> = blocks
             .iter()
-            .filter_map(|b| {
-                if b.get("type").and_then(|t| t.as_str()) == Some("thinking") {
-                    b.get("thinking").and_then(|t| t.as_str()).map(String::from)
-                } else {
-                    None
-                }
-            })
+            .filter(|b| b.get("type").and_then(|t| t.as_str()) == Some("thinking"))
+            .cloned()
+            .collect();
+        let thinking_parts: Vec<String> = thinking_blocks
+            .iter()
+            .filter_map(|b| b.get("thinking").and_then(|t| t.as_str()).map(String::from))
             .collect();
         let reasoning_content = if thinking_parts.is_empty() {
             None
@@ -421,6 +446,10 @@ impl AnthropicAdapter {
         if let Some(ref reasoning) = reasoning_content {
             message["reasoning_content"] = json!(reasoning);
         }
+        // Store raw thinking blocks (with signature fields) for multi-turn echo-back
+        if !thinking_blocks.is_empty() {
+            message["_thinking_blocks"] = json!(thinking_blocks);
+        }
 
         json!({
             "id": response.get("id").cloned().unwrap_or(json!("")),
@@ -452,6 +481,17 @@ fn supports_thinking(model: &str) -> bool {
         || m.starts_with("claude-opus")
         || m.starts_with("claude-sonnet-4")
         || m.starts_with("claude-sonnet-5")
+}
+
+/// Check if a model supports adaptive thinking (Claude 4.6+ only).
+/// Adaptive thinking uses `type: "adaptive"` instead of `type: "enabled"`,
+/// letting the model decide how much to think rather than requiring a fixed budget.
+fn supports_adaptive_thinking(model: &str) -> bool {
+    let m = model.to_lowercase();
+    m.contains("opus-4-6")
+        || m.contains("opus-4.6")
+        || m.contains("sonnet-4-6")
+        || m.contains("sonnet-4.6")
 }
 
 impl Default for AnthropicAdapter {
@@ -489,27 +529,53 @@ impl super::base::ProviderAdapter for AnthropicAdapter {
             && effort != "none"
             && supports_thinking(&model)
         {
-            let budget_tokens: u64 = match effort.as_str() {
-                "low" => 4000,
-                "medium" => 16000,
-                "high" => 31999,
-                _ => 16000,
-            };
-            payload["thinking"] = json!({
-                "type": "enabled",
-                "budget_tokens": budget_tokens
-            });
+            if supports_adaptive_thinking(&model) {
+                // Claude 4.6+ uses adaptive thinking — the model decides how much to think.
+                // For "low"/"medium" we set an optional budget cap; for "high" we leave it uncapped.
+                match effort.as_str() {
+                    "low" => {
+                        payload["thinking"] = json!({
+                            "type": "adaptive",
+                            "budget_tokens": 8000
+                        });
+                    }
+                    "medium" => {
+                        payload["thinking"] = json!({
+                            "type": "adaptive",
+                            "budget_tokens": 16000
+                        });
+                    }
+                    _ => {
+                        // "high" or any other value — uncapped adaptive
+                        payload["thinking"] = json!({
+                            "type": "adaptive"
+                        });
+                    }
+                }
+            } else {
+                // Legacy models (3.7, 4.0) use fixed budget thinking
+                let budget_tokens: u64 = match effort.as_str() {
+                    "low" => 4000,
+                    "medium" => 16000,
+                    "high" => 31999,
+                    _ => 16000,
+                };
+                payload["thinking"] = json!({
+                    "type": "enabled",
+                    "budget_tokens": budget_tokens
+                });
+                // Ensure max_tokens >= budget_tokens + 1024
+                let current_max = payload
+                    .get("max_tokens")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(16384);
+                let min_max = budget_tokens + 1024;
+                if current_max < min_max {
+                    payload["max_tokens"] = json!(min_max);
+                }
+            }
             // Anthropic requires temperature=1 for extended thinking
             payload["temperature"] = json!(1);
-            // Ensure max_tokens >= budget_tokens + 1024
-            let current_max = payload
-                .get("max_tokens")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(16384);
-            let min_max = budget_tokens + 1024;
-            if current_max < min_max {
-                payload["max_tokens"] = json!(min_max);
-            }
         }
 
         if self.enable_caching {
@@ -869,5 +935,118 @@ mod tests {
         let result = adapter.convert_request(payload);
         // budget_tokens for "high" is 31999, so max_tokens should be at least 33023
         assert!(result["max_tokens"].as_u64().unwrap() >= 33023);
+    }
+
+    #[test]
+    fn test_supports_adaptive_thinking() {
+        // 4.6 models support adaptive thinking
+        assert!(supports_adaptive_thinking("claude-opus-4-6-20260301"));
+        assert!(supports_adaptive_thinking("claude-opus-4.6-20260301"));
+        assert!(supports_adaptive_thinking("claude-sonnet-4-6-20260301"));
+        assert!(supports_adaptive_thinking("claude-sonnet-4.6-20260301"));
+        // Non-4.6 models do not
+        assert!(!supports_adaptive_thinking("claude-sonnet-4-20250514"));
+        assert!(!supports_adaptive_thinking("claude-opus-4-20250514"));
+        assert!(!supports_adaptive_thinking("claude-3-7-sonnet-20250219"));
+        assert!(!supports_adaptive_thinking("gpt-4o"));
+    }
+
+    #[test]
+    fn test_convert_request_adaptive_thinking_high() {
+        let adapter = AnthropicAdapter::new().with_caching(false);
+        let payload = json!({
+            "model": "claude-opus-4-6-20260301",
+            "messages": [{"role": "user", "content": "Think deeply"}],
+            "_reasoning_effort": "high"
+        });
+        let result = adapter.convert_request(payload);
+        assert_eq!(result["thinking"]["type"], "adaptive");
+        // "high" should be uncapped — no budget_tokens field
+        assert!(result["thinking"].get("budget_tokens").is_none());
+        assert_eq!(result["temperature"], 1);
+    }
+
+    #[test]
+    fn test_convert_request_adaptive_thinking_medium() {
+        let adapter = AnthropicAdapter::new().with_caching(false);
+        let payload = json!({
+            "model": "claude-sonnet-4.6-20260301",
+            "messages": [{"role": "user", "content": "Think"}],
+            "_reasoning_effort": "medium"
+        });
+        let result = adapter.convert_request(payload);
+        assert_eq!(result["thinking"]["type"], "adaptive");
+        assert_eq!(result["thinking"]["budget_tokens"], 16000);
+    }
+
+    #[test]
+    fn test_convert_request_adaptive_thinking_low() {
+        let adapter = AnthropicAdapter::new().with_caching(false);
+        let payload = json!({
+            "model": "claude-opus-4.6-20260301",
+            "messages": [{"role": "user", "content": "Quick"}],
+            "_reasoning_effort": "low"
+        });
+        let result = adapter.convert_request(payload);
+        assert_eq!(result["thinking"]["type"], "adaptive");
+        assert_eq!(result["thinking"]["budget_tokens"], 8000);
+    }
+
+    #[test]
+    fn test_thinking_blocks_signature_preserved_in_response() {
+        let response = json!({
+            "id": "msg_sig",
+            "model": "claude-opus-4-6-20260301",
+            "content": [
+                {"type": "thinking", "thinking": "Deep thought", "signature": "sig_abc123"},
+                {"type": "text", "text": "Answer."}
+            ],
+            "stop_reason": "end_turn",
+            "usage": {"input_tokens": 10, "output_tokens": 20}
+        });
+        let result = AnthropicAdapter::response_to_chat_completions(response);
+        let msg = &result["choices"][0]["message"];
+        assert_eq!(msg["reasoning_content"], "Deep thought");
+        // Raw _thinking_blocks should preserve the signature field
+        let blocks = msg["_thinking_blocks"].as_array().unwrap();
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0]["signature"], "sig_abc123");
+        assert_eq!(blocks[0]["thinking"], "Deep thought");
+    }
+
+    #[test]
+    fn test_thinking_blocks_signature_roundtrip() {
+        // Simulate a multi-turn conversation: response → echo-back
+        // The _thinking_blocks with signatures should be used for echo-back
+        let mut payload = json!({
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": "Using a tool.",
+                    "reasoning_content": "Let me think.",
+                    "_thinking_blocks": [
+                        {"type": "thinking", "thinking": "Let me think.", "signature": "sig_xyz"}
+                    ],
+                    "tool_calls": [{
+                        "id": "tc-1",
+                        "function": {"name": "bash", "arguments": "{\"command\": \"ls\"}"}
+                    }]
+                },
+                {
+                    "role": "tool",
+                    "tool_call_id": "tc-1",
+                    "content": "file1.rs"
+                }
+            ]
+        });
+        AnthropicAdapter::convert_tool_messages(&mut payload);
+        let messages = payload["messages"].as_array().unwrap();
+        let assistant_content = messages[0]["content"].as_array().unwrap();
+        // Should use raw block with signature, not reconstructed thinking
+        assert_eq!(assistant_content[0]["type"], "thinking");
+        assert_eq!(assistant_content[0]["signature"], "sig_xyz");
+        assert_eq!(assistant_content[0]["thinking"], "Let me think.");
+        assert_eq!(assistant_content[1]["type"], "text");
+        assert_eq!(assistant_content[2]["type"], "tool_use");
     }
 }
