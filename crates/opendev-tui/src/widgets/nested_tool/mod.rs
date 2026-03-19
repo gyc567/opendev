@@ -208,6 +208,7 @@ impl Widget for NestedToolWidget<'_> {
             }
 
             // Show last few completed tools (max 3)
+            // Use actual completed_tools len for slicing (it's capped at 100)
             let completed_start = subagent.completed_tools.len().saturating_sub(3);
             let visible_completed = &subagent.completed_tools[completed_start..];
             for (j, completed) in visible_completed.iter().enumerate() {
@@ -240,9 +241,13 @@ impl Widget for NestedToolWidget<'_> {
             }
 
             // Show hidden count if there are more completed tools
-            if completed_start > 0 {
+            // Use tool_call_count (actual total) since completed_tools is capped at 100
+            let total_completed = subagent.tool_call_count.saturating_sub(subagent.active_tools.len());
+            let visible_count = visible_completed.len();
+            let hidden_count = total_completed.saturating_sub(visible_count);
+            if hidden_count > 0 {
                 lines.push(Line::from(Span::styled(
-                    format!(" {vertical}   +{completed_start} more tool uses"),
+                    format!(" {vertical}   +{hidden_count} more tool uses"),
                     Style::default()
                         .fg(style_tokens::SUBTLE)
                         .add_modifier(Modifier::ITALIC),

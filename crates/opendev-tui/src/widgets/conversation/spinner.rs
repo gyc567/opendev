@@ -275,7 +275,9 @@ impl<'a> ConversationWidget<'a> {
         }
 
         // "+N more tool uses" if hidden completed > 0
-        let hidden = sa.completed_tools.len().saturating_sub(1);
+        // Use tool_call_count (actual total) since completed_tools is capped at 100
+        let total_completed = sa.tool_call_count.saturating_sub(sa.active_tools.len());
+        let hidden = total_completed.saturating_sub(1);
         if hidden > 0 {
             lines.push(Line::from(Span::styled(
                 format!("      +{hidden} more tool uses"),
