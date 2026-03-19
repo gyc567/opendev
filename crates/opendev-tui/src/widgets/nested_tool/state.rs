@@ -36,6 +36,8 @@ pub struct SubagentDisplayState {
     pub finished_at: Option<Instant>,
     /// The parent spawn_subagent tool_id (set when SubagentStarted is linked to ToolStarted).
     pub parent_tool_id: Option<String>,
+    /// Short display label (from `description` param), used instead of full task in spinner.
+    pub description: Option<String>,
 }
 
 impl SubagentDisplayState {
@@ -57,7 +59,13 @@ impl SubagentDisplayState {
             shallow_warning: None,
             finished_at: None,
             parent_tool_id: None,
+            description: None,
         }
+    }
+
+    /// Returns the short display label if set, otherwise the full task.
+    pub fn display_label(&self) -> &str {
+        self.description.as_deref().unwrap_or(&self.task)
     }
 
     /// Record a new tool call starting.
@@ -114,7 +122,7 @@ impl SubagentDisplayState {
         self.finished_at = Some(Instant::now());
         self.success = success;
         self.result_summary = result_summary;
-        self.tool_call_count = tool_call_count;
+        self.tool_call_count = tool_call_count.max(self.tool_call_count);
         self.shallow_warning = shallow_warning;
     }
 
@@ -220,6 +228,21 @@ mod tests {
         assert!(state.success);
         assert_eq!(state.result_summary, "Done");
         assert_eq!(state.tool_call_count, 3);
+    }
+
+    #[test]
+    fn test_finish_preserves_higher_live_count() {
+        let mut state = SubagentDisplayState::new("id-test".into(), "test".into(), "task".into());
+        // Simulate 10 live tool calls
+        for i in 0..10 {
+            let id = format!("tc-{i}");
+            state.add_tool_call("read_file".into(), id.clone(), HashMap::new());
+            state.complete_tool_call(&id, true);
+        }
+        assert_eq!(state.tool_call_count, 10);
+        // finish() with a lower message-based count should NOT decrease the count
+        state.finish(true, "Done".into(), 4, None);
+        assert_eq!(state.tool_call_count, 10);
     }
 
     #[test]

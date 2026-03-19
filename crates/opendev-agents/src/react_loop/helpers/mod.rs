@@ -530,6 +530,28 @@ mod tests {
     }
 
     #[test]
+    fn test_count_subagent_tool_calls_parallel() {
+        // One assistant turn with 3 parallel tool calls should count as 3
+        let messages = vec![
+            serde_json::json!({"role": "assistant", "content": null, "tool_calls": [
+                {"id": "1", "function": {"name": "read_file", "arguments": "{}"}},
+                {"id": "2", "function": {"name": "read_file", "arguments": "{}"}},
+                {"id": "3", "function": {"name": "read_file", "arguments": "{}"}}
+            ]}),
+            serde_json::json!({"role": "tool", "name": "read_file", "content": "ok"}),
+            serde_json::json!({"role": "tool", "name": "read_file", "content": "ok"}),
+            serde_json::json!({"role": "tool", "name": "read_file", "content": "ok"}),
+            serde_json::json!({"role": "assistant", "content": "Done."}),
+        ];
+        // 3 individual tool calls
+        assert_eq!(ReactLoop::count_subagent_tool_calls(&messages), 3);
+        // But only 1 tool turn
+        assert_eq!(ReactLoop::count_subagent_tool_turns(&messages), 1);
+        // Shallow warning triggers (only 1 turn)
+        assert!(ReactLoop::shallow_subagent_warning(&messages, true).is_some());
+    }
+
+    #[test]
     fn test_shallow_subagent_failed_no_warning() {
         let messages = vec![serde_json::json!({"role": "assistant", "content": "I failed."})];
         assert!(ReactLoop::shallow_subagent_warning(&messages, false).is_none());
