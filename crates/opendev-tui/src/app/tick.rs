@@ -52,7 +52,10 @@ impl App {
         }
 
         // Advance spinner animation
-        if self.state.agent_active || !self.state.active_tools.is_empty() {
+        if self.state.agent_active
+            || !self.state.active_tools.is_empty()
+            || self.state.background_task_count > 0
+        {
             self.state.spinner.tick();
         }
 

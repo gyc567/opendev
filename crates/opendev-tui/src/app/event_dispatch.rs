@@ -9,6 +9,32 @@ use super::{
 };
 
 impl App {
+    /// Batch all pending background results into a single injection message
+    /// and drain it through the normal message queue.
+    pub(super) fn drain_background_results(&mut self) {
+        if self.state.pending_bg_results.is_empty() {
+            return;
+        }
+        let results = std::mem::take(&mut self.state.pending_bg_results);
+        let mut parts = Vec::new();
+        for r in &results {
+            parts.push(format!(
+                "[Background task [{id}] completed ({tools} tools, ${cost:.4})]\n\
+                 Task: {query}\n\n\
+                 {result}\n\n\
+                 Summarize the above findings concisely and continue.",
+                id = r.task_id,
+                tools = r.tool_call_count,
+                cost = r.cost_usd,
+                query = r.query,
+                result = r.result,
+            ));
+        }
+        let msg = parts.join("\n\n");
+        self.state.pending_messages.push(msg);
+        self.drain_next_pending_message();
+    }
+
     pub(super) fn drain_next_pending_message(&mut self) {
         if let Some(queued_msg) = self.state.pending_messages.first().cloned() {
             self.state.pending_messages.remove(0);
@@ -58,6 +84,7 @@ impl App {
                     || self.state.task_progress.is_some()
                     || !self.state.welcome_panel.fade_complete
                     || self.state.task_watcher_open
+                    || self.state.background_task_count > 0
                     || self.state.last_task_completion.is_some()
                     || self.state.backgrounded_task_info.is_some()
                     || !self.state.toasts.is_empty()
@@ -127,7 +154,12 @@ impl App {
                 self.state.agent_active = false;
                 self.state.backgrounding_pending = false;
                 self.state.dirty = true;
-                self.drain_next_pending_message();
+                // Priority: user messages first, then background results
+                if !self.state.pending_messages.is_empty() {
+                    self.drain_next_pending_message();
+                } else if !self.state.pending_bg_results.is_empty() {
+                    self.drain_background_results();
+                }
             }
             AppEvent::AgentError(err) => {
                 self.state.agent_active = false;
@@ -189,7 +221,10 @@ impl App {
                         task,
                     );
                     sa.parent_tool_id = Some(tool_id.clone());
-                    sa.description = args.get("description").and_then(|v| v.as_str()).map(String::from);
+                    sa.description = args
+                        .get("description")
+                        .and_then(|v| v.as_str())
+                        .map(String::from);
                     self.state.active_subagents.push(sa);
                 }
 
@@ -735,23 +770,52 @@ impl App {
             // Background agent events
             AppEvent::AgentBackgrounded {
                 task_id,
-                query_summary,
+                query_summary: _,
             } => {
                 self.state.backgrounding_pending = false;
+
+                // Close out any active tools with "Sent to background" result
+                for tool in std::mem::take(&mut self.state.active_tools) {
+                    self.state.messages.push(DisplayMessage {
+                        role: DisplayRole::Assistant,
+                        content: String::new(),
+                        tool_call: Some(DisplayToolCall {
+                            name: tool.name.clone(),
+                            arguments: tool.args.clone(),
+                            summary: None,
+                            success: true,
+                            collapsed: false,
+                            result_lines: vec!["Sent to background".to_string()],
+                            nested_calls: Vec::new(),
+                        }),
+                        collapsed: false,
+                    });
+                }
+                self.state.active_subagents.clear();
+                self.state.task_progress = None;
+
                 self.state.backgrounded_task_info =
                     Some((task_id.clone(), std::time::Instant::now()));
-                self.push_system_message(format!(
-                    "Agent moved to background [{task_id}]: {query_summary}"
-                ));
                 self.state.dirty = true;
+                self.state.message_generation += 1;
             }
             AppEvent::BackgroundAgentCompleted {
                 task_id,
                 success,
                 result_summary,
+                full_result,
                 cost_usd,
                 tool_call_count,
             } => {
+                // Check if the task was killed before queuing results
+                let was_killed = self
+                    .state
+                    .bg_agent_manager
+                    .get_task(&task_id)
+                    .is_some_and(|t| {
+                        t.state == crate::managers::background_agents::BackgroundAgentState::Killed
+                    });
+
                 self.state.bg_agent_manager.mark_completed(
                     &task_id,
                     success,
@@ -762,9 +826,43 @@ impl App {
                 let status = if success { "completed" } else { "failed" };
                 self.state.last_task_completion =
                     Some((task_id.clone(), std::time::Instant::now()));
+
+                // Clear backgrounded_task_info if it matches this task
+                if let Some((ref info_id, _)) = self.state.backgrounded_task_info
+                    && info_id == &task_id
+                {
+                    self.state.backgrounded_task_info = None;
+                }
+
                 self.push_system_message(format!(
-                    "Background agent [{task_id}] {status}: {result_summary} ({tool_call_count} tools, ${cost_usd:.4})"
+                    "Background agent [{task_id}] {status} ({tool_call_count} tools, ${cost_usd:.4})"
                 ));
+
+                // Queue successful, non-killed results for injection
+                if success && !was_killed {
+                    let query = self
+                        .state
+                        .bg_agent_manager
+                        .get_task(&task_id)
+                        .map(|t| t.query.clone())
+                        .unwrap_or_default();
+                    self.state
+                        .pending_bg_results
+                        .push(super::PendingBackgroundResult {
+                            task_id: task_id.clone(),
+                            query,
+                            result: full_result,
+                            success,
+                            tool_call_count,
+                            cost_usd,
+                        });
+
+                    // If idle, drain immediately
+                    if !self.state.agent_active && self.state.pending_messages.is_empty() {
+                        self.drain_background_results();
+                    }
+                }
+
                 self.state.dirty = true;
             }
             AppEvent::BackgroundAgentProgress {
@@ -775,6 +873,10 @@ impl App {
                 self.state
                     .bg_agent_manager
                     .update_progress(&task_id, tool_name, tool_count);
+                self.state.dirty = true;
+            }
+            AppEvent::BackgroundAgentActivity { task_id, line } => {
+                self.state.bg_agent_manager.push_activity(&task_id, line);
                 self.state.dirty = true;
             }
             AppEvent::BackgroundAgentKilled { task_id } => {
@@ -830,6 +932,11 @@ impl App {
             AppEvent::FileChanged { paths } => {
                 // Just mark dirty — file changes are informational
                 let _ = paths;
+                self.state.dirty = true;
+            }
+
+            AppEvent::SessionTitleUpdated(title) => {
+                self.state.session_title = Some(title);
                 self.state.dirty = true;
             }
 
