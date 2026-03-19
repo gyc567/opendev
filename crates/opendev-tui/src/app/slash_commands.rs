@@ -75,32 +75,19 @@ impl App {
                 self.push_system_message(format!("Autonomy: {}", self.state.autonomy));
             }
             "models" => {
-                match args {
-                    Some(model_name) if !model_name.is_empty() => {
-                        // Direct model set: /models <name>
-                        self.state.model = model_name.to_string();
-                        self.push_system_message(format!("Model set to: {}", self.state.model));
-                        // Propagate to backend
-                        if let Some(ref tx) = self.user_message_tx {
-                            let _ = tx.send(format!("\x00__MODEL_CHANGE__{}", self.state.model));
-                        }
-                    }
-                    _ => {
-                        // Open interactive model picker
-                        let cache_dir = opendev_config::Paths::new(None).global_cache_dir();
-                        let picker = crate::controllers::ModelPickerController::from_registry(
-                            &cache_dir,
-                            &self.state.model,
-                        );
-                        if picker.filtered_count() == 0 {
-                            self.push_system_message(
-                                "No models available. Run `opendev setup` to configure providers."
-                                    .to_string(),
-                            );
-                        } else {
-                            self.model_picker_controller = Some(picker);
-                        }
-                    }
+                // Always open interactive model picker
+                let cache_dir = opendev_config::Paths::new(None).global_cache_dir();
+                let picker = crate::controllers::ModelPickerController::from_registry(
+                    &cache_dir,
+                    &self.state.model,
+                );
+                if picker.filtered_count() == 0 {
+                    self.push_system_message(
+                        "No models available. Run `opendev setup` to configure providers."
+                            .to_string(),
+                    );
+                } else {
+                    self.model_picker_controller = Some(picker);
                 }
             }
             "session-models" => match args {
@@ -363,7 +350,7 @@ impl App {
                         "  /clear             — Clear conversation",
                         "  /mode [plan|normal]      — Toggle or set mode",
                         "  /autonomy [manual|semi-auto|auto] — Cycle or set autonomy",
-                        "  /models [name]     — Open model picker or set model directly",
+                        "  /models              — Open model picker",
                         "  /session-models [name|clear] — Set model for session",
                         "  /sessions          — List saved sessions",
                         "  /undo              — Undo last file changes",
@@ -490,40 +477,6 @@ mod tests {
         assert!(
             has_picker || has_message,
             "Expected model picker or 'No models' message"
-        );
-    }
-
-    #[test]
-    fn test_slash_models_set() {
-        let mut app = App::new();
-        app.execute_slash_command("/models gpt-4o");
-        assert_eq!(app.state.model, "gpt-4o");
-        assert!(
-            app.state
-                .messages
-                .last()
-                .unwrap()
-                .content
-                .contains("gpt-4o")
-        );
-    }
-
-    #[test]
-    fn test_slash_models_trailing_space_opens_picker() {
-        let mut app = App::new();
-        let original_model = app.state.model.clone();
-        app.execute_slash_command("/models ");
-        // Should NOT set model to empty string — should open picker or show "No models"
-        assert_eq!(app.state.model, original_model);
-        let has_picker = app.model_picker_controller.is_some();
-        let has_message = app
-            .state
-            .messages
-            .last()
-            .is_some_and(|m| m.content.contains("No models"));
-        assert!(
-            has_picker || has_message,
-            "Trailing space should open picker, not set empty model"
         );
     }
 
