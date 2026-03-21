@@ -268,7 +268,7 @@ impl<'a> ConversationWidget<'a> {
         let hidden = total_completed.saturating_sub(1);
         if hidden > 0 {
             lines.push(Line::from(Span::styled(
-                format!("      +{hidden} more tool uses"),
+                format!("      +{hidden} more tool uses (ctrl+b to run in background)"),
                 Style::default()
                     .fg(style_tokens::GREY)
                     .add_modifier(Modifier::ITALIC),
