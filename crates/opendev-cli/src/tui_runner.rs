@@ -227,10 +227,12 @@ impl TuiRunner {
                                 subagent_id,
                                 subagent_name,
                                 task,
+                                cancel_token,
                             } => AppEvent::SubagentStarted {
                                 subagent_id,
                                 subagent_name,
                                 task,
+                                cancel_token,
                             },
                             SubagentEvent::ToolCall {
                                 subagent_id,

@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use opendev_tools_core::{BaseTool, ToolContext, ToolResult};
 use tokio::sync::mpsc;
+use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 use super::events::{ChannelProgressCallback, SubagentEvent};
@@ -217,12 +218,20 @@ impl BaseTool for SpawnSubagentTool {
         // Unique ID for this subagent instance (disambiguates parallel subagents)
         let subagent_id = uuid::Uuid::new_v4().to_string();
 
+        // Create per-subagent child cancellation token
+        let subagent_cancel = if let Some(parent) = ctx.cancel_token.as_ref() {
+            parent.child_token()
+        } else {
+            CancellationToken::new()
+        };
+
         // Create progress callback
         let progress: Arc<dyn opendev_agents::SubagentProgressCallback> =
             if let Some(ref tx) = self.event_tx {
                 Arc::new(ChannelProgressCallback::new(
                     tx.clone(),
                     subagent_id.clone(),
+                    Some(subagent_cancel.clone()),
                 ))
             } else {
                 Arc::new(opendev_agents::NoopProgressCallback)
@@ -243,6 +252,7 @@ impl BaseTool for SpawnSubagentTool {
                 None,
                 self.parent_max_tokens,
                 self.parent_reasoning_effort.clone(),
+                Some(subagent_cancel),
             )
             .await;
 
