@@ -32,7 +32,6 @@ use crate::app::{DisplayMessage, DisplayRole, DisplayToolCall, RoleStyle, ToolEx
 use crate::formatters::display::strip_system_reminders;
 use crate::formatters::markdown::MarkdownRenderer;
 use crate::formatters::style_tokens::{self, Indent};
-use crate::formatters::tool_registry::categorize_tool;
 use crate::widgets::progress::TaskProgress;
 use crate::widgets::spinner::{COMPLETED_CHAR, CONTINUATION_CHAR, SPINNER_FRAMES};
 
@@ -309,19 +308,9 @@ impl<'a> ConversationWidget<'a> {
                 }
             }
         } else if effective_collapsed && !tc.result_lines.is_empty() {
-            // Show collapsed indicator — read tools get a short summary
             let count = tc.result_lines.len();
-            let is_read = categorize_tool(&tc.name)
-                == crate::formatters::tool_registry::ToolCategory::FileRead;
-            let label = if is_read {
-                let verb = crate::formatters::tool_registry::lookup_tool(&tc.name).verb;
-                format!("  {}  {verb} {count} lines", CONTINUATION_CHAR)
-            } else {
-                format!(
-                    "  {}  ({count} lines collapsed, press Ctrl+O to expand)",
-                    CONTINUATION_CHAR,
-                )
-            };
+            let verb = crate::formatters::tool_registry::lookup_tool(&tc.name).verb;
+            let label = format!("  {}  {verb} {count} lines", CONTINUATION_CHAR);
             lines.push(Line::from(Span::styled(
                 label,
                 Style::default().fg(style_tokens::SUBTLE),
