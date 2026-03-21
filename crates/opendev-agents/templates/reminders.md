@@ -136,12 +136,23 @@ All implementation todos are now complete. Call task_complete with a summary of 
 COMMAND FAILED with exit code {exit_code}. Review the error output above and fix the issue before proceeding. Do not repeat the same command without addressing the root cause.
 
 --- plan_subagent_request ---
-User requested planning. Spawn a Planner subagent to plan this task. Include
-the task description and this exact plan file path in the prompt: {plan_file_path}
+User requested planning. Before creating a plan, first understand the codebase:
+
+1. List the current directory structure to see what exists
+2. Read relevant files to understand patterns and conventions
+3. Then spawn a Planner subagent with your findings and this plan file path: {plan_file_path}
+
 After the Planner returns, call present_plan(plan_file_path="{plan_file_path}").
 
 --- tool_denied_nudge ---
 The tool call was denied. Do NOT re-attempt the exact same call. Consider why it was denied and adjust your approach. If unclear, use ask_user to ask the user why the tool call was denied.
+
+--- explore_phase_complete ---
+<explore_complete>
+You now have codebase context. Spawn a Planner subagent with:
+(1) the original task, (2) what you learned from exploring,
+(3) plan file path: {plan_file_path}
+</explore_complete>
 
 --- plan_file_reference ---
 A plan file exists from a previous session at {plan_file_path}. You may read

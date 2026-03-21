@@ -94,7 +94,7 @@ impl<'a> TaskWatcherPanel<'a> {
         self.bg_manager
             .all_tasks()
             .into_iter()
-            .filter(|t| !self.covered_bg_task_ids.contains(&t.task_id))
+            .filter(|t| !t.hidden && !self.covered_bg_task_ids.contains(&t.task_id))
             .collect()
     }
 }
@@ -410,7 +410,12 @@ fn render_cell(data: &TaskCellData, area: Rect, buf: &mut Buffer) {
             let args = line.args.replace('\n', " ");
             let args_display = format!(" {args}");
             let args_truncated = truncate_str(&args_display, remaining);
-            buf.set_string(x, y, &args_truncated, Style::default().fg(style_tokens::SUBTLE));
+            buf.set_string(
+                x,
+                y,
+                &args_truncated,
+                Style::default().fg(style_tokens::SUBTLE),
+            );
         }
     }
 }
@@ -630,7 +635,10 @@ fn build_bg_agent_cell(
         crate::managers::background_agents::BackgroundAgentState::Failed => "Failed",
         crate::managers::background_agents::BackgroundAgentState::Killed => "Killed",
     };
-    let footer = format!("{status_str} · {elapsed_str} · {} tools", task.tool_call_count);
+    let footer = format!(
+        "{status_str} · {elapsed_str} · {} tools",
+        task.tool_call_count
+    );
     let footer_color = match task.state {
         crate::managers::background_agents::BackgroundAgentState::Running => style_tokens::SUBTLE,
         crate::managers::background_agents::BackgroundAgentState::Completed => {

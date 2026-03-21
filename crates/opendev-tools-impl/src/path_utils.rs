@@ -40,10 +40,7 @@ pub fn validate_path_access(resolved: &Path, working_dir: &Path) -> Result<(), S
 
     // Allow well-known global config directories.
     if let Some(home) = dirs::home_dir() {
-        let allowed_prefixes = [
-            home.join(".opendev"),
-            home.join(".config").join("opendev"),
-        ];
+        let allowed_prefixes = [home.join(".opendev"), home.join(".config").join("opendev")];
         for prefix in &allowed_prefixes {
             if normalized.starts_with(prefix) {
                 return Ok(());

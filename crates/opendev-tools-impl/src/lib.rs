@@ -94,7 +94,7 @@ pub use open_browser::OpenBrowserTool;
 pub use patch::PatchTool;
 pub use present_plan::PresentPlanTool;
 pub use schedule::ScheduleTool;
-pub use session::SessionTool;
+pub use session::PastSessionsTool;
 pub use task_complete::TaskCompleteTool;
 pub use todo::TodoTool;
 pub use update_todo::UpdateTodoTool;

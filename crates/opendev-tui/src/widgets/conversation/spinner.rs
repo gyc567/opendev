@@ -51,9 +51,7 @@ impl<'a> ConversationWidget<'a> {
                 ),
             ]));
         } else if self.backgrounding_pending
-            && !active_unfinished
-                .iter()
-                .any(|t| t.name == "spawn_subagent")
+            && !active_unfinished.iter().any(|t| t.name == "spawn_subagent")
         {
             // Backgrounding feedback for non-subagent tools (e.g. bash, run_command).
             // When subagents are active, we fall through to the normal rendering loop

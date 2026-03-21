@@ -553,11 +553,17 @@ fn format_parts_inner(
 
     // Special case: past_sessions shows action-specific verbs
     if tool_name == "past_sessions" {
-        let action = args.get("action").and_then(|v| v.as_str()).unwrap_or("list");
+        let action = args
+            .get("action")
+            .and_then(|v| v.as_str())
+            .unwrap_or("list");
         return match action {
             "list" => ("List Sessions".to_string(), String::new()),
             "read" => {
-                let id = args.get("session_id").and_then(|v| v.as_str()).unwrap_or("...");
+                let id = args
+                    .get("session_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("...");
                 ("Read Session".to_string(), id.to_string())
             }
             "search" => {
@@ -565,7 +571,10 @@ fn format_parts_inner(
                 ("Search Sessions".to_string(), format!("\"{q}\""))
             }
             "info" => {
-                let id = args.get("session_id").and_then(|v| v.as_str()).unwrap_or("...");
+                let id = args
+                    .get("session_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("...");
                 ("Session Info".to_string(), id.to_string())
             }
             other => ("Sessions".to_string(), other.to_string()),

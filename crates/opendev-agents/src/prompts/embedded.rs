@@ -161,7 +161,7 @@ pub const TOOLS_TOOL_WRITE_TODOS: &str = include_str!("../../templates/tools/too
 // ---------------------------------------------------------------------------
 
 /// Total number of embedded templates.
-pub const TEMPLATE_COUNT: usize = 80;
+pub const TEMPLATE_COUNT: usize = 79;
 
 /// All embedded templates indexed by their relative path.
 ///

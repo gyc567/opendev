@@ -1105,10 +1105,7 @@ mod tests {
             .collect();
 
         // Each subagent should be rendered individually (no grouping)
-        assert!(
-            !text.contains("3 subagents"),
-            "Should not group subagents"
-        );
+        assert!(!text.contains("3 subagents"), "Should not group subagents");
         for task in &tasks {
             assert!(
                 text.contains(task),
@@ -1200,10 +1197,7 @@ mod tests {
             "active tool 'Read' should appear in individual spinner lines"
         );
         // No grouping
-        assert!(
-            !text.contains("2 subagents"),
-            "Should not group subagents"
-        );
+        assert!(!text.contains("2 subagents"), "Should not group subagents");
     }
 
     #[test]
@@ -1317,10 +1311,7 @@ mod tests {
             "Should not group subagents: {all_text}"
         );
         // At least some individual agents visible in the 8-row viewport
-        let visible = tasks
-            .iter()
-            .filter(|t| all_text.contains(*t))
-            .count();
+        let visible = tasks.iter().filter(|t| all_text.contains(*t)).count();
         assert!(
             visible >= 1,
             "At least one subagent should be visible: {all_text}"

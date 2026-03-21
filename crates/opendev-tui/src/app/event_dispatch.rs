@@ -536,9 +536,7 @@ impl App {
                     sa.subagent_id = subagent_id.clone();
                     sa.name = subagent_name;
                     if let Some(token) = cancel_token {
-                        self.state
-                            .subagent_cancel_tokens
-                            .insert(subagent_id, token);
+                        self.state.subagent_cancel_tokens.insert(subagent_id, token);
                     }
                 } else {
                     // Fallback: create if not found (e.g. ToolStarted was missed)
@@ -560,9 +558,7 @@ impl App {
                         sa.parent_tool_id = parent_tool_id;
                         self.state.active_subagents.push(sa);
                         if let Some(token) = cancel_token {
-                            self.state
-                                .subagent_cancel_tokens
-                                .insert(subagent_id, token);
+                            self.state.subagent_cancel_tokens.insert(subagent_id, token);
                         }
                     } else if let Some(bg_task_id) = self
                         .state
@@ -592,9 +588,7 @@ impl App {
                         sa.backgrounded = true;
                         self.state.active_subagents.push(sa);
                         if let Some(token) = cancel_token {
-                            self.state
-                                .subagent_cancel_tokens
-                                .insert(subagent_id, token);
+                            self.state.subagent_cancel_tokens.insert(subagent_id, token);
                         }
                     }
                 }
@@ -780,9 +774,17 @@ impl App {
             }
 
             AppEvent::UserSubmit(ref msg) => {
+                // Consume pending plan request and prepend sentinel
+                let forwarded = if self.state.pending_plan_request {
+                    self.state.pending_plan_request = false;
+                    self.state.mode = OperationMode::Normal;
+                    format!("\x00__PLAN_MODE__{}", msg)
+                } else {
+                    msg.clone()
+                };
                 // Forward to backend if channel is configured
                 if let Some(ref tx) = self.user_message_tx {
-                    let _ = tx.send(msg.clone());
+                    let _ = tx.send(forwarded);
                     self.state.agent_active = true;
                 }
                 self.state.dirty = true;
@@ -990,12 +992,7 @@ impl App {
                             .find(|s| s.subagent_id == *sa_id)
                             && !sa.finished
                         {
-                            sa.finish(
-                                false,
-                                "Killed".to_string(),
-                                sa.tool_call_count,
-                                None,
-                            );
+                            sa.finish(false, "Killed".to_string(), sa.tool_call_count, None);
                         }
                         self.state.bg_subagent_map.remove(sa_id);
                         self.state.subagent_cancel_tokens.remove(sa_id);
@@ -1247,4 +1244,3 @@ impl App {
         }
     }
 }
-

@@ -1065,7 +1065,10 @@ mod tests {
             tool_name: "spawn_subagent".into(),
             args: {
                 let mut args = std::collections::HashMap::new();
-                args.insert("task".into(), serde_json::Value::String("Inspect auth flow".into()));
+                args.insert(
+                    "task".into(),
+                    serde_json::Value::String("Inspect auth flow".into()),
+                );
                 args.insert(
                     "description".into(),
                     serde_json::Value::String("Inspect auth flow".into()),
@@ -1078,7 +1081,10 @@ mod tests {
             tool_name: "spawn_subagent".into(),
             args: {
                 let mut args = std::collections::HashMap::new();
-                args.insert("task".into(), serde_json::Value::String("Trace API routes".into()));
+                args.insert(
+                    "task".into(),
+                    serde_json::Value::String("Trace API routes".into()),
+                );
                 args.insert(
                     "description".into(),
                     serde_json::Value::String("Trace API routes".into()),

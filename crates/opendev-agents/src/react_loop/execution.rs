@@ -775,8 +775,10 @@ impl ReactLoop {
                         };
 
                         let mut _any_tool_failed = false;
+                        let mut parallel_tool_names: Vec<String> = Vec::new();
 
                         for (tc_id, t_name, tool_result) in results {
+                            parallel_tool_names.push(t_name.clone());
                             {
                                 let output_str = if tool_result.success {
                                     tool_result.output.as_deref().unwrap_or("")
@@ -820,6 +822,9 @@ impl ReactLoop {
                                 "content": formatted,
                             }));
                         }
+
+                        // Track exploration tools for planning phase transition (parallel)
+                        Self::track_exploration_tools(tool_context, &parallel_tool_names, messages);
 
                         // Check for interrupt after parallel execution
                         let interrupted_by_monitor =
@@ -1352,6 +1357,13 @@ impl ReactLoop {
 
                         completed_tool_count += 1;
 
+                        // Track exploration tools for planning phase transition (sequential)
+                        Self::track_exploration_tools(
+                            tool_context,
+                            &[tool_name.to_string()],
+                            messages,
+                        );
+
                         // Check for interrupt between tool executions —
                         // preserve partial work (completed tool results
                         // already appended to messages above).
@@ -1476,6 +1488,66 @@ impl ReactLoop {
             // Finalize metrics for this iteration
             iter_metrics.total_duration_ms = iter_start.elapsed().as_millis() as u64;
             self.push_metrics(iter_metrics);
+        }
+    }
+
+    /// Track exploration tool calls for planning phase transitions.
+    ///
+    /// When `shared_state` has `planning_phase == "explore"`, any exploration
+    /// tool call (list_files, read_file, search, grep) increments `explore_count`
+    /// and transitions the phase to "plan", then injects a reminder nudging
+    /// the LLM to spawn Planner.
+    fn track_exploration_tools(
+        tool_context: &opendev_tools_core::ToolContext,
+        tool_names: &[String],
+        messages: &mut Vec<Value>,
+    ) {
+        let shared = match tool_context.shared_state.as_ref() {
+            Some(s) => s,
+            None => return,
+        };
+        const EXPLORATION_TOOLS: &[&str] = &["list_files", "read_file", "search", "grep"];
+        let has_exploration = tool_names
+            .iter()
+            .any(|name| EXPLORATION_TOOLS.contains(&name.as_str()));
+        if !has_exploration {
+            return;
+        }
+        let transitioned = if let Ok(mut state) = shared.lock() {
+            let count = state
+                .get("explore_count")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            let exploration_count = tool_names
+                .iter()
+                .filter(|n| EXPLORATION_TOOLS.contains(&n.as_str()))
+                .count() as u64;
+            state.insert(
+                "explore_count".into(),
+                serde_json::json!(count + exploration_count),
+            );
+            if state.get("planning_phase").and_then(|v| v.as_str()) == Some("explore") {
+                state.insert("planning_phase".into(), serde_json::json!("plan"));
+                // Get plan_file_path for the reminder
+                state
+                    .get("plan_file_path")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        // Inject explore_phase_complete reminder after phase transition
+        if let Some(plan_file_path) = transitioned {
+            let reminder = get_reminder(
+                "explore_phase_complete",
+                &[("plan_file_path", &plan_file_path)],
+            );
+            if !reminder.is_empty() {
+                append_directive(messages, &reminder);
+            }
         }
     }
 }

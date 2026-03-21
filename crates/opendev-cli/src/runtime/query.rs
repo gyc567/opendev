@@ -80,10 +80,11 @@ impl AgentRuntime {
         system_prompt: &str,
         event_callback: Option<&dyn AgentEventCallback>,
         interrupt_token: Option<&opendev_runtime::InterruptToken>,
+        plan_requested: bool,
     ) -> Result<AgentResult, AgentError> {
         info!(
             query_len = query.len(),
-            "Running query through agent pipeline"
+            plan_requested, "Running query through agent pipeline"
         );
 
         // Step 1: Save user message to session
@@ -131,6 +132,21 @@ impl AgentRuntime {
         let tool_schemas = self.tool_registry.get_schemas();
 
         // Step 5: Create tool context
+        let shared_state = if plan_requested {
+            let plans_dir = dirs_next::home_dir()
+                .map(|h: std::path::PathBuf| h.join(".opendev").join("plans"))
+                .unwrap_or_else(|| std::path::PathBuf::from("/tmp"));
+            let plan_name = opendev_runtime::generate_plan_name(Some(&plans_dir), 50);
+            let plan_path = format!("~/.opendev/plans/{}.md", plan_name);
+            let mut state = HashMap::new();
+            state.insert("planning_phase".to_string(), serde_json::json!("explore"));
+            state.insert("plan_file_path".to_string(), serde_json::json!(plan_path));
+            state.insert("explore_count".to_string(), serde_json::json!(0));
+            Some(std::sync::Arc::new(std::sync::Mutex::new(state)))
+        } else {
+            None
+        };
+
         let tool_context = ToolContext {
             working_dir: self.working_dir.clone(),
             is_subagent: false,
@@ -139,7 +155,30 @@ impl AgentRuntime {
             timeout_config: None,
             cancel_token: interrupt_token.map(|t| t.child_token()),
             diagnostic_provider: None,
+            shared_state: shared_state.clone(),
         };
+
+        // Inject plan reminder if plan mode is active
+        if plan_requested {
+            let plan_path = shared_state
+                .as_ref()
+                .and_then(|s| s.lock().ok())
+                .and_then(|s| {
+                    s.get("plan_file_path")
+                        .and_then(|v| v.as_str().map(|s| s.to_string()))
+                })
+                .unwrap_or_default();
+            let reminder = opendev_agents::prompts::reminders::get_reminder(
+                "plan_subagent_request",
+                &[("plan_file_path", &plan_path)],
+            );
+            if !reminder.is_empty() {
+                messages.push(serde_json::json!({
+                    "role": "user",
+                    "content": format!("<system-reminder>{}</system-reminder>", reminder)
+                }));
+            }
+        }
 
         // Step 6: Set original task for completion nudge context
         self.react_loop.set_original_task(Some(query.to_string()));
@@ -255,11 +294,7 @@ impl AgentRuntime {
                 .current_session()
                 .map(|s| {
                     let has_title = s.metadata.contains_key("title");
-                    let user_msg_count = s
-                        .messages
-                        .iter()
-                        .filter(|m| m.role == Role::User)
-                        .count();
+                    let user_msg_count = s.messages.iter().filter(|m| m.role == Role::User).count();
                     let should = !has_title || (user_msg_count > 1 && user_msg_count % 5 == 0);
                     let title = s
                         .metadata
@@ -301,13 +336,9 @@ impl AgentRuntime {
                     .await
                 {
                     // Skip no-op updates
-                    let is_same = current_title
-                        .as_deref()
-                        .is_some_and(|ct| ct == title);
+                    let is_same = current_title.as_deref().is_some_and(|ct| ct == title);
 
-                    if !is_same
-                        && let Some(session) = self.session_manager.current_session()
-                    {
+                    if !is_same && let Some(session) = self.session_manager.current_session() {
                         let session_id = session.id.clone();
                         if let Err(e) = self.session_manager.set_title(&session_id, &title) {
                             debug!("Failed to set session title: {e}");

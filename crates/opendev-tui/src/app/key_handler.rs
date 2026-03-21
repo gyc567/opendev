@@ -200,7 +200,7 @@ impl App {
                 .bg_agent_manager
                 .all_tasks()
                 .iter()
-                .filter(|t| !covered_bg_task_ids.contains(&t.task_id))
+                .filter(|t| !t.hidden && !covered_bg_task_ids.contains(&t.task_id))
                 .count();
             let total_tasks = self.state.active_subagents.len() + filtered_bg_count;
 
@@ -277,6 +277,25 @@ impl App {
                                 self.state.subagent_cancel_tokens.get(&subagent.subagent_id)
                         {
                             token.cancel();
+                            // If this was the last active subagent for the parent bg task, kill the parent too
+                            if let Some(parent_bg_id) = self
+                                .state
+                                .bg_subagent_map
+                                .get(&subagent.subagent_id)
+                                .cloned()
+                            {
+                                let other_active = self.state.active_subagents.iter().any(|s| {
+                                    s.backgrounded
+                                        && !s.finished
+                                        && s.subagent_id != subagent.subagent_id
+                                        && self.state.bg_subagent_map.get(&s.subagent_id)
+                                            == Some(&parent_bg_id)
+                                });
+                                if !other_active {
+                                    self.state.bg_agent_manager.kill_task(&parent_bg_id);
+                                    self.state.bg_agent_manager.hide_task(&parent_bg_id);
+                                }
+                            }
                         }
                     } else {
                         // Focused on a bg_agent_manager cell — use filtered list to match display order
@@ -286,7 +305,7 @@ impl App {
                             .bg_agent_manager
                             .all_tasks()
                             .into_iter()
-                            .filter(|t| !covered_bg_task_ids.contains(&t.task_id))
+                            .filter(|t| !t.hidden && !covered_bg_task_ids.contains(&t.task_id))
                             .collect();
                         if bg_idx < filtered.len() {
                             let task_id = filtered[bg_idx].task_id.clone();
