@@ -702,22 +702,6 @@ impl App {
                             &bg_task_id,
                             format!("  Subagent {status} · {tool_call_count} tools"),
                         );
-                        // Auto-hide parent when all subagents finished and no pending spawns
-                        // (mirrors kill cascade in key_handler.rs)
-                        let has_remaining = self.state.active_subagents.iter().any(|s| {
-                            s.backgrounded
-                                && !s.finished
-                                && self.state.bg_subagent_map.get(&s.subagent_id)
-                                    == Some(&bg_task_id)
-                        });
-                        let pending = self
-                            .state
-                            .bg_agent_manager
-                            .get_task(&bg_task_id)
-                            .is_some_and(|t| t.pending_spawn_count > 0);
-                        if !has_remaining && !pending {
-                            self.state.bg_agent_manager.hide_task(&bg_task_id);
-                        }
                     }
                 } else if let Some(bg_task_id) = self.state.bg_subagent_map.remove(&subagent_id) {
                     let status = if success { "completed" } else { "failed" };
@@ -725,20 +709,6 @@ impl App {
                         &bg_task_id,
                         format!("  Subagent {status} · {tool_call_count} tools"),
                     );
-                    // Auto-hide parent when all subagents finished and no pending spawns
-                    let has_remaining = self.state.active_subagents.iter().any(|s| {
-                        s.backgrounded
-                            && !s.finished
-                            && self.state.bg_subagent_map.get(&s.subagent_id) == Some(&bg_task_id)
-                    });
-                    let pending = self
-                        .state
-                        .bg_agent_manager
-                        .get_task(&bg_task_id)
-                        .is_some_and(|t| t.pending_spawn_count > 0);
-                    if !has_remaining && !pending {
-                        self.state.bg_agent_manager.hide_task(&bg_task_id);
-                    }
                 }
                 // Clean up per-subagent cancel token
                 self.state.subagent_cancel_tokens.remove(&subagent_id);

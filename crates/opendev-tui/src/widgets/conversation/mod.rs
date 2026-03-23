@@ -260,8 +260,26 @@ impl<'a> ConversationWidget<'a> {
                         }
                     }
                 }
+                DisplayRole::System => {
+                    let subtle_style = Style::default().fg(style_tokens::SUBTLE);
+                    for (i, line_text) in content.lines().enumerate() {
+                        if i == 0 {
+                            lines.push(Line::from(vec![
+                                Span::styled(
+                                    format!("{} ", COMPLETED_CHAR),
+                                    Style::default().fg(style_tokens::WARNING),
+                                ),
+                                Span::styled(line_text.to_string(), subtle_style),
+                            ]));
+                        } else {
+                            lines.push(Line::from(vec![
+                                Span::raw(Indent::CONT),
+                                Span::styled(line_text.to_string(), subtle_style),
+                            ]));
+                        }
+                    }
+                }
                 DisplayRole::User
-                | DisplayRole::System
                 | DisplayRole::Interrupt
                 | DisplayRole::SlashCommand
                 | DisplayRole::CommandResult => {
