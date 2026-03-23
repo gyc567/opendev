@@ -318,6 +318,8 @@ impl BashTool {
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped());
 
+        // Create new process group on Unix for clean kill
+        #[cfg(unix)]
         unsafe {
             cmd.pre_exec(|| {
                 libc::setpgid(0, 0);
