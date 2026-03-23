@@ -54,31 +54,31 @@ OpenDev is written in **Rust** for maximum performance and minimal resource usag
 brew install opendev-to/tap/opendev
 
 # Shell installer
-curl --proto '=https' --tlsv1.2 -LsSf https://github.com/opendev-to/opendev/releases/latest/download/opendev-installer.sh | sh
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/opendev-to/opendev/releases/latest/download/opendev-cli-installer.sh | sh
 
 # Or download the binary directly from GitHub Releases:
-#   opendev-aarch64-apple-darwin.tar.xz  (Apple Silicon)
-#   opendev-x86_64-apple-darwin.tar.xz   (Intel)
+#   opendev-cli-aarch64-apple-darwin.tar.xz  (Apple Silicon)
+#   opendev-cli-x86_64-apple-darwin.tar.xz   (Intel)
 ```
 
 #### Linux
 
 ```bash
 # Shell installer (x86_64 and ARM64)
-curl --proto '=https' --tlsv1.2 -LsSf https://github.com/opendev-to/opendev/releases/latest/download/opendev-installer.sh | sh
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/opendev-to/opendev/releases/latest/download/opendev-cli-installer.sh | sh
 
 # Or download the binary directly from GitHub Releases:
-#   opendev-x86_64-unknown-linux-gnu.tar.xz   (x86_64)
-#   opendev-aarch64-unknown-linux-gnu.tar.xz   (ARM64 / Raspberry Pi)
+#   opendev-cli-x86_64-unknown-linux-gnu.tar.xz   (x86_64)
+#   opendev-cli-aarch64-unknown-linux-gnu.tar.xz   (ARM64 / Raspberry Pi)
 ```
 
 #### Windows
 
 ```powershell
 # PowerShell installer
-powershell -ExecutionPolicy ByPass -c "irm https://github.com/opendev-to/opendev/releases/latest/download/opendev-installer.ps1 | iex"
+powershell -ExecutionPolicy ByPass -c "irm https://github.com/opendev-to/opendev/releases/latest/download/opendev-cli-installer.ps1 | iex"
 
-# Or download opendev-x86_64-pc-windows-msvc.zip from GitHub Releases
+# Or download opendev-cli-x86_64-pc-windows-msvc.zip from GitHub Releases
 ```
 
 #### From source (all platforms)
@@ -98,11 +98,11 @@ cargo build --release -p opendev-cli
 
 | Platform | Architecture | Binary |
 |----------|-------------|--------|
-| macOS | Apple Silicon (M1+) | `opendev-aarch64-apple-darwin.tar.xz` |
-| macOS | Intel | `opendev-x86_64-apple-darwin.tar.xz` |
-| Linux | x86_64 | `opendev-x86_64-unknown-linux-gnu.tar.xz` |
-| Linux | ARM64 | `opendev-aarch64-unknown-linux-gnu.tar.xz` |
-| Windows | x86_64 | `opendev-x86_64-pc-windows-msvc.zip` |
+| macOS | Apple Silicon (M1+) | `opendev-cli-aarch64-apple-darwin.tar.xz` |
+| macOS | Intel | `opendev-cli-x86_64-apple-darwin.tar.xz` |
+| Linux | x86_64 | `opendev-cli-x86_64-unknown-linux-gnu.tar.xz` |
+| Linux | ARM64 | `opendev-cli-aarch64-unknown-linux-gnu.tar.xz` |
+| Windows | x86_64 | `opendev-cli-x86_64-pc-windows-msvc.zip` |
 
 #### Verify installation
 

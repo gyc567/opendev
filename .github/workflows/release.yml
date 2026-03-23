@@ -278,10 +278,48 @@ jobs:
 
           gh release create "${{ needs.plan.outputs.tag }}" --target "$RELEASE_COMMIT" $PRERELEASE_FLAG --title "$ANNOUNCEMENT_TITLE" --notes-file "$RUNNER_TEMP/notes.txt" artifacts/*
 
+  # Publish Homebrew formula to the tap repo
+  publish-homebrew:
+    needs:
+      - plan
+      - host
+    if: ${{ always() && needs.host.result == 'success' && needs.plan.outputs.publishing == 'true' }}
+    runs-on: "ubuntu-22.04"
+    env:
+      GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+    steps:
+      - name: Fetch artifacts
+        uses: actions/download-artifact@v7
+        with:
+          pattern: artifacts-*
+          path: artifacts/
+          merge-multiple: true
+      - name: Publish formula to tap
+        run: |
+          # Find the generated Homebrew formula
+          FORMULA=$(find artifacts -name "*.rb" | head -1)
+          if [ -z "$FORMULA" ]; then
+            echo "No Homebrew formula found, skipping"
+            exit 0
+          fi
+          echo "Found formula: $FORMULA"
+
+          # Clone the tap repo and push the formula
+          git clone "https://x-access-token:${GH_TOKEN}@github.com/opendev-to/homebrew-tap.git" tap
+          mkdir -p tap/Formula
+          cp "$FORMULA" tap/Formula/opendev.rb
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/opendev.rb
+          git commit -m "Update opendev to ${{ needs.plan.outputs.tag }}" || echo "No changes"
+          git push
+
   announce:
     needs:
       - plan
       - host
+      - publish-homebrew
     # use "always() && ..." to allow us to wait for all publish jobs while
     # still allowing individual publish jobs to skip themselves (for prereleases).
     # "host" however must run to completion, no skipping allowed!
