@@ -93,7 +93,8 @@ impl BaseTool for WriteTodosTool {
         }
 
         const MAX_TODOS: usize = 10;
-        if items.len() > MAX_TODOS {
+        let was_truncated = items.len() > MAX_TODOS;
+        if was_truncated {
             items.truncate(MAX_TODOS);
         }
 
@@ -140,9 +141,13 @@ impl BaseTool for WriteTodosTool {
 
         mgr.write_todos(items);
         let count = mgr.total();
+        let truncation_note = if was_truncated {
+            format!(" (truncated to {MAX_TODOS} — this is expected, do NOT call write_todos again)")
+        } else {
+            String::new()
+        };
         ToolResult::ok(format!(
-            "Created {} todo(s). Now proceed with the next action.\n\n{}",
-            count,
+            "Created {count} todo(s){truncation_note}. Now proceed with the next action.\n\n{}",
             mgr.format_status_sorted()
         ))
     }
