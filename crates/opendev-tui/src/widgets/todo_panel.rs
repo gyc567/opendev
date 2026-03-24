@@ -88,18 +88,21 @@ impl<'a> TodoPanelWidget<'a> {
         (self.items.len() as u16 + 3).min(12)
     }
 
-    fn build_lines(&self) -> Vec<Line<'a>> {
-        let total = self.items.len();
-        let done = self
-            .items
-            .iter()
-            .filter(|i| i.status == TodoDisplayStatus::Completed)
-            .count();
-        let in_progress = self
-            .items
-            .iter()
-            .filter(|i| i.status == TodoDisplayStatus::InProgress)
-            .count();
+    /// Count (done, in_progress, total) in a single pass.
+    fn counts(&self) -> (usize, usize, usize) {
+        let mut done = 0usize;
+        let mut in_progress = 0usize;
+        for item in self.items {
+            match item.status {
+                TodoDisplayStatus::Completed => done += 1,
+                TodoDisplayStatus::InProgress => in_progress += 1,
+                TodoDisplayStatus::Pending => {}
+            }
+        }
+        (done, in_progress, self.items.len())
+    }
+
+    fn build_lines(&self, done: usize, in_progress: usize, total: usize) -> Vec<Line<'a>> {
 
         let mut lines = Vec::new();
 
@@ -179,7 +182,7 @@ impl<'a> TodoPanelWidget<'a> {
         lines
     }
 
-    fn build_collapsed_line(&self) -> Line<'a> {
+    fn build_collapsed_line(&self, done: usize, total: usize) -> Line<'a> {
         let spinner = SPINNER_FRAMES[self.spinner_tick % SPINNER_FRAMES.len()];
 
         // Find the active (doing) item
@@ -194,13 +197,6 @@ impl<'a> TodoPanelWidget<'a> {
                     .or(Some(i.title.as_str()))
             })
             .unwrap_or("Working...");
-
-        let done = self
-            .items
-            .iter()
-            .filter(|i| i.status == TodoDisplayStatus::Completed)
-            .count();
-        let total = self.items.len();
 
         Line::from(vec![
             Span::styled(
@@ -223,12 +219,7 @@ impl<'a> TodoPanelWidget<'a> {
 
 impl Widget for TodoPanelWidget<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        let total = self.items.len();
-        let done = self
-            .items
-            .iter()
-            .filter(|i| i.status == TodoDisplayStatus::Completed)
-            .count();
+        let (done, in_progress, total) = self.counts();
 
         let title_text = if self.expanded {
             if let Some(name) = self.plan_name {
@@ -242,7 +233,9 @@ impl Widget for TodoPanelWidget<'_> {
 
         let title = Line::from(Span::styled(
             title_text,
-            Style::default().fg(style_tokens::ACCENT),
+            Style::default()
+                .fg(style_tokens::ACCENT)
+                .add_modifier(Modifier::BOLD),
         ));
 
         let border_color = if done == total && total > 0 {
@@ -257,11 +250,11 @@ impl Widget for TodoPanelWidget<'_> {
             .border_style(Style::default().fg(border_color));
 
         if self.expanded {
-            let lines = self.build_lines();
+            let lines = self.build_lines(done, in_progress, total);
             let paragraph = Paragraph::new(lines).block(block);
             paragraph.render(area, buf);
         } else {
-            let line = self.build_collapsed_line();
+            let line = self.build_collapsed_line(done, total);
             let paragraph = Paragraph::new(vec![line]).block(block);
             paragraph.render(area, buf);
         }
@@ -299,7 +292,8 @@ mod tests {
     fn test_build_lines_count() {
         let items = make_items();
         let widget = TodoPanelWidget::new(&items);
-        let lines = widget.build_lines();
+        let (done, in_progress, total) = widget.counts();
+        let lines = widget.build_lines(done, in_progress, total);
         // 1 progress bar line + 3 item lines
         assert_eq!(lines.len(), 4);
     }
@@ -316,7 +310,8 @@ mod tests {
     fn test_empty_items() {
         let items: Vec<TodoDisplayItem> = vec![];
         let widget = TodoPanelWidget::new(&items);
-        let lines = widget.build_lines();
+        let (done, in_progress, total) = widget.counts();
+        let lines = widget.build_lines(done, in_progress, total);
         assert!(lines.is_empty());
     }
 
@@ -351,7 +346,8 @@ mod tests {
             active_form: None,
         }];
         let widget = TodoPanelWidget::new(&items);
-        let lines = widget.build_lines();
+        let (done, in_progress, total) = widget.counts();
+        let lines = widget.build_lines(done, in_progress, total);
         // Progress bar + 1 item
         assert_eq!(lines.len(), 2);
     }
@@ -370,7 +366,8 @@ mod tests {
     fn test_collapsed_uses_active_form() {
         let items = make_items();
         let widget = TodoPanelWidget::new(&items).with_expanded(false);
-        let line = widget.build_collapsed_line();
+        let (done, _, total) = widget.counts();
+        let line = widget.build_collapsed_line(done, total);
         // Should contain the active_form text "Writing code"
         let text: String = line.spans.iter().map(|s| s.content.to_string()).collect();
         assert!(text.contains("Writing code"));
