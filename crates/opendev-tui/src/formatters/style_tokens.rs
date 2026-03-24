@@ -172,9 +172,9 @@ impl Theme {
             phase_critique: Color::Rgb(255, 179, 71),
             phase_refinement: Color::Rgb(0, 191, 255),
 
-            heading_1: Color::Rgb(186, 182, 215),
+            heading_1: Color::Rgb(210, 205, 245),
             heading_2: Color::Rgb(186, 182, 215),
-            heading_3: Color::Rgb(186, 182, 215),
+            heading_3: Color::Rgb(155, 152, 190),
             code_fg: Color::Rgb(150, 190, 160),
             code_bg: Color::Rgb(30, 30, 30),
             bullet: Color::Rgb(140, 148, 160),
@@ -213,9 +213,9 @@ impl Theme {
             phase_critique: Color::Rgb(180, 120, 0),
             phase_refinement: Color::Rgb(0, 140, 200),
 
-            heading_1: Color::Rgb(80, 70, 110),
+            heading_1: Color::Rgb(60, 50, 100),
             heading_2: Color::Rgb(80, 70, 110),
-            heading_3: Color::Rgb(80, 70, 110),
+            heading_3: Color::Rgb(100, 92, 130),
             code_fg: Color::Rgb(50, 120, 70),
             code_bg: Color::Rgb(240, 240, 240),
             bullet: Color::Rgb(120, 120, 135),
@@ -254,9 +254,9 @@ impl Theme {
             phase_critique: Color::Rgb(255, 184, 108), // Orange
             phase_refinement: Color::Rgb(139, 233, 253), // Cyan
 
-            heading_1: Color::Rgb(180, 165, 220), // Soft purple
-            heading_2: Color::Rgb(180, 165, 220),
-            heading_3: Color::Rgb(180, 165, 220),
+            heading_1: Color::Rgb(210, 195, 250), // Bright purple
+            heading_2: Color::Rgb(180, 165, 220), // Soft purple
+            heading_3: Color::Rgb(150, 138, 195), // Muted purple
             code_fg: Color::Rgb(140, 210, 155), // Muted green
             code_bg: Color::Rgb(40, 42, 54),    // Background
             bullet: Color::Rgb(98, 114, 164),   // Comment
@@ -310,9 +310,9 @@ pub const DIFF_ADD_BG: Color = Color::Rgb(0, 40, 0);
 pub const DIFF_DEL_BG: Color = Color::Rgb(40, 0, 0);
 
 // Markdown heading colors
-pub const HEADING_1: Color = Color::Rgb(186, 182, 215);
+pub const HEADING_1: Color = Color::Rgb(210, 205, 245);
 pub const HEADING_2: Color = Color::Rgb(186, 182, 215);
-pub const HEADING_3: Color = Color::Rgb(186, 182, 215);
+pub const HEADING_3: Color = Color::Rgb(155, 152, 190);
 pub const CODE_FG: Color = Color::Rgb(150, 190, 160);
 pub const CODE_BG: Color = Color::Rgb(30, 30, 30);
 pub const BULLET: Color = Color::Rgb(140, 148, 160);
