@@ -77,8 +77,6 @@ pub struct AppState {
     pub todo_expanded: bool,
     /// Spinner tick counter for todo panel animation.
     pub todo_spinner_tick: usize,
-    /// When all todo items completed (for auto-hide after grace period).
-    pub todo_all_done_at: Option<Instant>,
     /// Optional plan name for the todo panel title.
     pub plan_name: Option<String>,
     /// File change stats for current session: (files, additions, deletions).
@@ -179,7 +177,7 @@ impl Default for AppState {
         Self {
             running: true,
             mode: OperationMode::Normal,
-            autonomy: AutonomyLevel::Manual,
+            autonomy: AutonomyLevel::SemiAuto,
             reasoning_level: ReasoningLevel::Medium,
             model: String::from("claude-sonnet-4"),
             working_dir: String::from("."),
@@ -210,7 +208,6 @@ impl Default for AppState {
             todo_items: Vec::new(),
             todo_expanded: true,
             todo_spinner_tick: 0,
-            todo_all_done_at: None,
             plan_name: None,
             file_changes: None,
             version: String::from("0.1.0"),

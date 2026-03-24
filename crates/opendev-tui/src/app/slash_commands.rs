@@ -528,7 +528,7 @@ mod tests {
     fn test_slash_autonomy_bad_arg() {
         let mut app = App::new();
         app.execute_slash_command("/autonomy bogus");
-        assert_eq!(app.state.autonomy, AutonomyLevel::Manual);
+        assert_eq!(app.state.autonomy, AutonomyLevel::SemiAuto);
         assert_command_result(&app, "/autonomy bogus", "Unknown autonomy");
     }
 
